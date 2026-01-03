@@ -1,4 +1,5 @@
-main() {
-	print("hello, world!")
-	x = 10
+Vector3 {
+  x F32
+  y F32
+  z F32
 }

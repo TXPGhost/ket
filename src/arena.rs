@@ -153,6 +153,11 @@ impl<M, I: Index> Id<M, I> {
         Id(I::from_usize(index), PhantomData)
     }
 
+    /// Constructs the index associated with this [Id].
+    pub fn index(self) -> usize {
+        I::into_usize(self.0)
+    }
+
     /// Returns the next adjacent [Id] to this one.
     pub fn next(self) -> Option<Self> {
         let index = self.0.into_usize().checked_add(1)?;

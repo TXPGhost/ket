@@ -1,9 +1,10 @@
+use colored::Colorize;
 use smallvec::SmallVec;
-use thiserror::Error;
 
 use crate::{
     arena::{Arena, Id, World},
-    error::{ErrorId, ErrorKind, ErrorRef, Errors},
+    error::{ErrorKind, Errors},
+    file::Files,
     lexer::{
         Location, TokenId,
         TokenKind::{self, *},
@@ -17,6 +18,8 @@ pub enum AstKind {
     UIdent,
     Void,
     String,
+    Character,
+    None,
     Integer,
     Float,
     Infix,
@@ -25,6 +28,7 @@ pub enum AstKind {
     Block,
     Proj,
     Struct,
+    Field,
 
     #[default]
     Error,
@@ -37,11 +41,53 @@ pub struct Ast {
     pub ids: World<Ast>,
     pub kinds: Arena<Ast, AstKind>,
     pub children: Arena<Ast, SmallVec<[AstId; 4]>>,
+    pub locations: Arena<Ast, Option<Location>>,
 }
 pub type AstId = Id<Ast>;
 
-#[derive(Debug, Error)]
-pub enum ParseError {}
+impl Ast {
+    fn compute_locations(&mut self, root: AstId) {
+        fn helper(
+            id: AstId,
+            locations: &mut Arena<Ast, Option<Location>>,
+            children: &Arena<Ast, SmallVec<[AstId; 4]>>,
+        ) {
+            let mut location = *id.get(locations);
+            for child in id.get(children) {
+                helper(*child, locations, children);
+                location = Location::merge(&location, child.get(locations));
+            }
+            id.put(locations, location);
+        }
+        helper(root, &mut self.locations, &self.children)
+    }
+
+    fn pretty_print_indented(&self, id: AstId, indent: usize, files: &Files) {
+        let kind_str = format!("{:?}", id.get(&self.kinds));
+        let mut len = indent * 2 + kind_str.len();
+        print!("{}{} ", "  ".repeat(indent), kind_str.bold());
+        let location = id.get(&self.locations);
+        if let Some(location) = location
+            && id.get(&self.children).is_empty()
+        {
+            let slice = &location.file.get(&files.sources)
+                [location.start as usize..location.end as usize]
+                .trim();
+            len += slice.len();
+            print!("{} ", slice.bold());
+        }
+        print!("{} ", " ".repeat(32_usize.saturating_sub(len)));
+        Location::pretty_print_opt(location, files);
+        for child in id.get(&self.children) {
+            self.pretty_print_indented(*child, indent + 1, files);
+        }
+    }
+
+    pub fn pretty_print(&mut self, id: AstId, files: &Files) {
+        self.compute_locations(id);
+        self.pretty_print_indented(id, 0, files);
+    }
+}
 
 impl TokenId {}
 
@@ -64,8 +110,18 @@ impl<'a> Parser<'a> {
 
     pub fn parse(mut self) -> AstId {
         let ast = self.parse_list(AstKind::Struct, Self::parse_field);
-        // TODO: check for completeness
+        if !self.eof() {
+            self.error("Trailing tokens when parsing file");
+        }
         ast
+    }
+
+    fn error(&mut self, message: impl Into<std::string::String>) {
+        let location = self.cur_loc();
+        let err = self.errors.log(ErrorKind::Parse, message.into());
+        if let Some(location) = location {
+            err.location(location);
+        }
     }
 
     fn node(&mut self, kind: AstKind) -> AstId {
@@ -76,8 +132,17 @@ impl<'a> Parser<'a> {
         id.get_mut(&mut self.ast.children).push(child);
     }
 
+    fn merge_loc(&mut self, id: AstId, cur_loc: Option<Location>) {
+        let loc = id.get_mut(&mut self.ast.locations);
+        *loc = Location::merge(loc, &cur_loc);
+    }
+
     fn cur(&self) -> TokenKind {
         *self.cursor.get(&self.tokens.kinds)
+    }
+
+    fn eof(&self) -> bool {
+        self.cur() == EndOfFile
     }
 
     fn cur_loc(&self) -> Option<Location> {
@@ -100,18 +165,29 @@ impl<'a> Parser<'a> {
     }
 
     fn try_eat<const N: usize>(&mut self, kinds: [TokenKind; N]) -> TokenKind {
+        assert!(!kinds.is_empty());
         for kind in kinds {
             if *self.cursor.get(&self.tokens.kinds) == kind {
                 return self.eat();
             }
         }
-        let location = self.cur_loc();
-        let err = self.errors.log(
-            ErrorKind::Parse,
-            format!("Expected one of the following tokens: {:?}", kinds),
-        );
-        if let Some(location) = location {
-            err.location(location);
+        if kinds.len() == 1 {
+            self.error(format!(
+                "Expected {:?} but found {:?}",
+                kinds[0],
+                self.cur()
+            ));
+        } else {
+            self.error(format!(
+                "Expected {}, or {:?}, but found {:?}",
+                &kinds[..kinds.len() - 1]
+                    .iter()
+                    .map(|kind| format!("{:?}", kind))
+                    .collect::<Vec<std::string::String>>()
+                    .join(", "),
+                kinds[kinds.len() - 1],
+                self.cur()
+            ));
         }
         self.cur()
     }
@@ -134,12 +210,13 @@ impl<'a> Parser<'a> {
     fn parse_list(&mut self, kind: AstKind, parser: impl Fn(&mut Self) -> AstId) -> AstId {
         let id = self.node(kind);
         let mut first = true;
-        while !self.matches([RParen, RSquare, RCurl]) {
+        while !self.eof() && !self.matches([RParen, RSquare, RCurl]) {
             if !first {
+                self.merge_loc(id, self.cur_loc());
                 self.try_eat([Comma, Newline, Semicolon]);
             }
             self.eat_many([Newline]);
-            if !first || self.matches([RParen, RSquare, RCurl]) {
+            if self.eof() || self.matches([RParen, RSquare, RCurl]) {
                 break;
             }
             let child = parser(self);
@@ -150,22 +227,64 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_field(&mut self) -> AstId {
-        self.errors.log(ErrorKind::Parse, "unimplemented");
-        self.node(AstKind::Error)
+        let id = self.node(AstKind::Field);
+        let ident = self.parse_ident();
+        let expr = self.parse_expr();
+        self.push_child(id, ident);
+        self.push_child(id, expr);
+        id
     }
 
     fn parse_ident(&mut self) -> AstId {
-        let id = if self.matches([Underscore]) {
-            self.node(AstKind::Void)
-        } else if self.matches([LIdent]) {
-            self.node(AstKind::LIdent)
-        } else if self.matches([UIdent]) {
-            self.node(AstKind::UIdent)
-        } else {
-            self.errors.log(ErrorKind::Parse, "Expected identifier");
-            self.node(AstKind::Error)
+        let id = match self.cur() {
+            Underscore => self.node(AstKind::Void),
+            LIdent => self.node(AstKind::LIdent),
+            UIdent => self.node(AstKind::UIdent),
+            _ => {
+                self.error("Expected identifier");
+                self.node(AstKind::Error)
+            }
         };
+        let location = self.cur_loc();
+        id.put(&mut self.ast.locations, location);
         self.eat();
+        id
+    }
+
+    fn parse_expr(&mut self) -> AstId {
+        match self.cur() {
+            LCurl => self.parse_struct(),
+            _ => self.parse_atom(),
+        }
+    }
+
+    fn parse_atom(&mut self) -> AstId {
+        let id = match self.cur() {
+            Integer => self.node(AstKind::Integer),
+            Float => self.node(AstKind::Float),
+            String => self.node(AstKind::String),
+            Character => self.node(AstKind::Character),
+            Underscore => self.node(AstKind::None),
+            LIdent => self.node(AstKind::LIdent),
+            UIdent => self.node(AstKind::UIdent),
+            _ => {
+                self.error("Expected expression");
+                self.node(AstKind::Error)
+            }
+        };
+        let location = self.cur_loc();
+        id.put(&mut self.ast.locations, location);
+        self.eat();
+        id
+    }
+
+    fn parse_struct(&mut self) -> AstId {
+        let lcurl_loc = self.cur_loc();
+        self.try_eat([LCurl]);
+        let id = self.parse_list(AstKind::Struct, Self::parse_field);
+        self.merge_loc(id, lcurl_loc);
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat([RCurl]);
         id
     }
 }

@@ -37,24 +37,6 @@ impl Errors {
         ErrorRef { errors: self, id }
     }
 
-    fn print_location(&self, err: ErrorId, files: &Files) {
-        if let Some(location) = err.get(&self.locations) {
-            println!(
-                "{}",
-                format!(
-                    " {}:{}:{}",
-                    location.file.get(&files.paths),
-                    location.start,
-                    location.end
-                )
-                .bright_black()
-                .bold()
-            );
-        } else {
-            println!();
-        }
-    }
-
     pub fn pretty_print(&mut self, files: &Files) {
         self.compute_roots();
         for mut err in self.ids.iter() {
@@ -62,19 +44,19 @@ impl Errors {
                 let error_text = format!("{:?} Error", err.get(&self.kinds));
                 let error_text_len = error_text.len();
                 print!(
-                    "{}{} {}",
+                    "{}{} {} ",
                     error_text.bright_red().bold(),
                     ":".bold(),
                     err.get(&self.messages).bold()
                 );
-                self.print_location(err, files);
+                Location::pretty_print_opt(err.get(&self.locations), files);
                 while let Some(cause) = *err.get(&self.causes) {
                     print!(
-                        "{}  {}",
+                        "{}  {} ",
                         " ".repeat(error_text_len),
                         cause.get(&self.messages).bold()
                     );
-                    self.print_location(cause, files);
+                    Location::pretty_print_opt(err.get(&self.locations), files);
                     err = cause;
                 }
             }
