@@ -103,7 +103,7 @@ pub struct ErrorRef<'a> {
 }
 
 impl<'a> ErrorRef<'a> {
-    pub fn at_location(self, location: Location) -> Self {
+    pub fn location(self, location: Location) -> Self {
         self.id.put(&mut self.errors.locations, Some(location));
         self
     }
@@ -124,25 +124,5 @@ impl<'a> ErrorRef<'a> {
             errors: self.errors,
             id,
         }
-    }
-}
-
-pub trait ErrorExt {
-    fn err_at_location(self, location: Location) -> Self;
-    fn err_caused_by(self, kind: ErrorKind, message: impl Into<String>) -> Self;
-    fn err_cause_of(self, kind: ErrorKind, message: impl Into<String>) -> Self;
-}
-
-impl<'a, T> ErrorExt for Result<T, ErrorRef<'a>> {
-    fn err_at_location(self, location: Location) -> Self {
-        self.map_err(|err| err.at_location(location))
-    }
-
-    fn err_caused_by(self, kind: ErrorKind, message: impl Into<String>) -> Self {
-        self.map_err(|err| err.caused_by(kind, message))
-    }
-
-    fn err_cause_of(self, kind: ErrorKind, message: impl Into<String>) -> Self {
-        self.map_err(|err| err.cause_of(kind, message))
     }
 }

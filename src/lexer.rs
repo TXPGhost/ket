@@ -174,7 +174,7 @@ pub fn lex_file(file: FileId, files: &Files, errors: &mut Errors) -> Tokens {
             let slice = &file.get(&files.sources)[span.start..span.end];
             errors
                 .log(ErrorKind::Lex, format!("Unrecognized token '{}'", slice))
-                .at_location(location);
+                .location(location);
             TokenKind::Unknown
         });
         tokens

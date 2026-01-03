@@ -3,9 +3,9 @@ use thiserror::Error;
 
 use crate::{
     arena::{Arena, Id, World},
-    error::{ErrorExt, ErrorKind, ErrorRef, Errors},
+    error::{ErrorId, ErrorKind, ErrorRef, Errors},
     lexer::{
-        TokenId,
+        Location, TokenId,
         TokenKind::{self, *},
         Tokens,
     },
@@ -13,7 +13,9 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum AstKind {
-    Ident,
+    LIdent,
+    UIdent,
+    Void,
     String,
     Integer,
     Float,
@@ -60,12 +62,32 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(self) -> AstId {
-        self.ast.ids.alloc() // TEMP
+    pub fn parse(mut self) -> AstId {
+        let ast = self.parse_list(AstKind::Struct, Self::parse_field);
+        // TODO: check for completeness
+        ast
     }
 
-    fn advance(&mut self) {
+    fn node(&mut self, kind: AstKind) -> AstId {
+        self.ast.ids.alloc().put(&mut self.ast.kinds, kind)
+    }
+
+    fn push_child(&mut self, id: AstId, child: AstId) {
+        id.get_mut(&mut self.ast.children).push(child);
+    }
+
+    fn cur(&self) -> TokenKind {
+        *self.cursor.get(&self.tokens.kinds)
+    }
+
+    fn cur_loc(&self) -> Option<Location> {
+        *self.cursor.get(&self.tokens.locations)
+    }
+
+    fn eat(&mut self) -> TokenKind {
+        let cur = self.cur();
         self.cursor = self.cursor.next().unwrap();
+        cur
     }
 
     fn matches<const N: usize>(&self, kinds: [TokenKind; N]) -> bool {
@@ -77,25 +99,29 @@ impl<'a> Parser<'a> {
         false
     }
 
-    fn try_consume<const N: usize>(&mut self, kinds: [TokenKind; N]) -> Result<(), ErrorRef> {
+    fn try_eat<const N: usize>(&mut self, kinds: [TokenKind; N]) -> TokenKind {
         for kind in kinds {
             if *self.cursor.get(&self.tokens.kinds) == kind {
-                self.advance();
-                return Ok(());
+                return self.eat();
             }
         }
-        Err(self.errors.log(
+        let location = self.cur_loc();
+        let err = self.errors.log(
             ErrorKind::Parse,
             format!("Expected one of the following tokens: {:?}", kinds),
-        ))
+        );
+        if let Some(location) = location {
+            err.location(location);
+        }
+        self.cur()
     }
 
-    fn consume_many<const N: usize>(&mut self, kinds: [TokenKind; N]) -> usize {
+    fn eat_many<const N: usize>(&mut self, kinds: [TokenKind; N]) -> usize {
         let mut count = 0;
         'outer: loop {
             for kind in kinds {
                 if *self.cursor.get(&self.tokens.kinds) == kind {
-                    self.advance();
+                    self.eat();
                     count += 1;
                     continue 'outer;
                 }
@@ -105,19 +131,41 @@ impl<'a> Parser<'a> {
         count
     }
 
-    fn parse_list<T>(
-        &mut self,
-        kind: AstKind,
-        parser: impl Fn(&mut Self) -> Result<AstId, ErrorRef>,
-    ) {
+    fn parse_list(&mut self, kind: AstKind, parser: impl Fn(&mut Self) -> AstId) -> AstId {
+        let id = self.node(kind);
         let mut first = true;
-        while self.matches([RParen, RSquare, RCurl]) {
+        while !self.matches([RParen, RSquare, RCurl]) {
             if !first {
-                let _ = self
-                    .try_consume([Comma, Newline, Semicolon])
-                    .err_caused_by(ErrorKind::Parse, "missing list separator");
-                self.consume_many([Newline]);
+                self.try_eat([Comma, Newline, Semicolon]);
             }
+            self.eat_many([Newline]);
+            if !first || self.matches([RParen, RSquare, RCurl]) {
+                break;
+            }
+            let child = parser(self);
+            self.push_child(id, child);
+            first = false;
         }
+        id
+    }
+
+    fn parse_field(&mut self) -> AstId {
+        self.errors.log(ErrorKind::Parse, "unimplemented");
+        self.node(AstKind::Error)
+    }
+
+    fn parse_ident(&mut self) -> AstId {
+        let id = if self.matches([Underscore]) {
+            self.node(AstKind::Void)
+        } else if self.matches([LIdent]) {
+            self.node(AstKind::LIdent)
+        } else if self.matches([UIdent]) {
+            self.node(AstKind::UIdent)
+        } else {
+            self.errors.log(ErrorKind::Parse, "Expected identifier");
+            self.node(AstKind::Error)
+        };
+        self.eat();
+        id
     }
 }
