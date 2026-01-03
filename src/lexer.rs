@@ -1,13 +1,13 @@
 use logos::{Lexer, Logos};
-use thiserror::Error;
 
 use crate::{
-    arena::{Arena, Ref},
-    file::{File, FileSources},
+    arena::{Arena, Id, World},
+    error::{ErrorKind, Errors},
+    file::{FileId, Files},
 };
 
 #[allow(missing_docs)]
-#[derive(Logos, Clone, Copy, Debug, PartialEq)]
+#[derive(Logos, Clone, Copy, Debug, PartialEq, Default)]
 #[logos(skip r"[ \t]+")]
 pub enum TokenKind {
     #[regex(r"[\n\f\r]+")]
@@ -135,47 +135,53 @@ pub enum TokenKind {
 
     #[regex(r#"[']([^'\\\n]|\\.|\\\n)*[']"#)]
     Character,
+
+    #[default]
+    Unknown,
 }
 
-pub struct Token;
-pub type TokenKinds = Arena<Token, TokenKind>;
-pub type TokenLocations = Arena<Token, Option<Location>>;
+#[derive(Default, Debug)]
+pub struct Tokens {
+    pub ids: World<Tokens>,
+    pub kinds: Arena<Tokens, TokenKind>,
+    pub locations: Arena<Tokens, Option<Location>>,
+}
+pub type TokenId = Id<Tokens>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location {
-    file: Ref<File>,
-    start: u32,
-    end: u32,
+    pub file: FileId,
+    pub start: u32,
+    pub end: u32,
 }
 
-#[derive(Error, Debug)]
-pub enum LexError {
-    #[error("an invalid token was encountered")]
-    InvalidToken(String),
-}
-
-pub fn lex_file(
-    file: Ref<File>,
-    sources: &FileSources,
-    tokens: &mut TokenKinds,
-    locations: &mut TokenLocations,
-) -> Result<(), LexError> {
-    let lexer = Lexer::<TokenKind>::new(file.get(sources).as_str());
-    for (tok, span) in lexer.spanned() {
-        match tok {
-            Ok(tok) => {
-                let tok_id = tokens.alloc(tok);
-                tok_id.put(
-                    locations,
-                    Some(Location {
-                        file,
-                        start: span.start as u32,
-                        end: span.end as u32,
-                    }),
-                )
-            }
-            Err(_) => return Err(LexError::InvalidToken("todo!".to_owned())),
-        }
+impl Location {
+    pub fn new(file: FileId, start: u32, end: u32) -> Self {
+        Self { file, start, end }
     }
-    Ok(())
+}
+
+pub fn lex_file(file: FileId, files: &Files, errors: &mut Errors) -> Tokens {
+    let mut tokens = Tokens::default();
+    let lexer = Lexer::<TokenKind>::new(file.get(&files.sources).as_str());
+    for (tok, span) in lexer.spanned() {
+        let location = Location {
+            file,
+            start: span.start as u32,
+            end: span.end as u32,
+        };
+        let tok = tok.unwrap_or_else(|_| {
+            let slice = &file.get(&files.sources)[span.start..span.end];
+            errors
+                .log(ErrorKind::Lex, format!("Unrecognized token '{}'", slice))
+                .at_location(location);
+            TokenKind::Unknown
+        });
+        tokens
+            .ids
+            .alloc()
+            .put(&mut tokens.kinds, tok)
+            .put(&mut tokens.locations, Some(location));
+    }
+    tokens
 }

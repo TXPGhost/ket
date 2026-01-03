@@ -1,15 +1,32 @@
-use crate::arena::{Arena, Ref};
+use crate::{
+    arena::{Arena, Id, World},
+    error::{ErrorKind, Errors},
+};
 
-pub struct File;
-pub type FileSources = Arena<File, String>;
-pub type FilePaths = Arena<File, Option<String>>;
+#[derive(Default, Debug)]
+pub struct Files {
+    pub ids: World<Files>,
+    pub sources: Arena<Files, String>,
+    pub paths: Arena<Files, String>,
+}
+pub type FileId = Id<Files>;
 
-pub fn read_file(
-    path: &str,
-    sources: &mut FileSources,
-    paths: &mut FilePaths,
-) -> Result<Ref<File>, std::io::Error> {
-    let file = sources.alloc(std::fs::read_to_string(path)?);
-    file.put(paths, Some(path.to_owned()));
-    Ok(file)
+pub fn read_file(path: &str, files: &mut Files, errors: &mut Errors) -> Option<FileId> {
+    let contents = std::fs::read_to_string(path);
+    match contents {
+        Ok(contents) => {
+            let id = files
+                .ids
+                .alloc()
+                .put(&mut files.sources, contents)
+                .put(&mut files.paths, path.to_owned());
+            Some(id)
+        }
+        Err(err) => {
+            errors
+                .log(ErrorKind::Io, format!("{}", err))
+                .caused_by(ErrorKind::Io, format!("Unable to open file \"{}\"", path));
+            None
+        }
+    }
 }

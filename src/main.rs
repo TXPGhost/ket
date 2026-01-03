@@ -1,28 +1,48 @@
-use std::error::Error;
+use std::time::Instant;
+
+use colored::Colorize;
 
 use crate::{
-    file::{FilePaths, FileSources, read_file},
-    lexer::{TokenKinds, TokenLocations, lex_file},
+    error::Errors,
+    file::{Files, read_file},
+    lexer::lex_file,
+    parser::{Ast, Parser},
 };
 
 pub mod arena;
+pub mod error;
 pub mod file;
 pub mod lexer;
 pub mod parser;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    let mut sources = FileSources::new();
-    let mut paths = FilePaths::new();
-    let mut tokens = TokenKinds::new();
-    let mut locations = TokenLocations::new();
+fn main() {
+    let mut errors = Errors::default();
+    let mut files = Files::default();
+    let mut ast = Ast::default();
 
-    let file = read_file("test/lex_test.ket", &mut sources, &mut paths)?;
-    lex_file(file, &sources, &mut tokens, &mut locations).unwrap();
+    let filenames = ["test/lex_test.ket", "haha"];
 
-    dbg!(&sources);
-    dbg!(&paths);
-    dbg!(&tokens);
-    dbg!(&locations);
+    let begin = Instant::now();
+    for filename in filenames {
+        println!(
+            "{}{} \"{}\"",
+            "Compiling".bright_green().bold(),
+            ":".bold(),
+            filename
+        );
+        let file = read_file(filename, &mut files, &mut errors);
+        if let Some(file) = file {
+            let tokens = lex_file(file, &files, &mut errors);
+            let parser = Parser::new(&tokens, &mut ast, &mut errors);
+            let _ = parser.parse();
+        }
+    }
 
-    Ok(())
+    let elapsed = begin.elapsed().as_secs_f32();
+    if errors.has_errors() {
+        errors.pretty_print(&files);
+        println!("Finished with errors in in {:.4} secs", elapsed);
+    } else {
+        println!("Finished in {:.4} secs", elapsed);
+    }
 }
