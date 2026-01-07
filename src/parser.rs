@@ -24,10 +24,15 @@ pub enum AstKind {
     Float,
     Infix,
     Call,
+    Group,
     Func,
     Block,
     Proj,
     Struct,
+    Constructor,
+    Tuple,
+    Array,
+    Args,
     Field,
 
     #[default]
@@ -116,12 +121,15 @@ impl<'a> Parser<'a> {
         ast
     }
 
-    fn error(&mut self, message: impl Into<std::string::String>) {
-        let location = self.cur_loc();
+    fn error_at(&mut self, location: Option<Location>, message: impl Into<std::string::String>) {
         let err = self.errors.log(ErrorKind::Parse, message.into());
         if let Some(location) = location {
             err.location(location);
         }
+    }
+
+    fn error(&mut self, message: impl Into<std::string::String>) {
+        self.error_at(self.cur_loc(), message);
     }
 
     fn node(&mut self, kind: AstKind) -> AstId {
@@ -130,6 +138,10 @@ impl<'a> Parser<'a> {
 
     fn push_child(&mut self, id: AstId, child: AstId) {
         id.get_mut(&mut self.ast.children).push(child);
+    }
+
+    fn num_children(&mut self, id: AstId) -> usize {
+        id.get(&self.ast.children).len()
     }
 
     fn merge_loc(&mut self, id: AstId, cur_loc: Option<Location>) {
@@ -235,6 +247,13 @@ impl<'a> Parser<'a> {
         id
     }
 
+    fn parse_field_or_expr(&mut self) -> AstId {
+        if !self.matches([LIdent, UIdent, Underscore]) {
+            return self.parse_expr();
+        }
+        self.parse_field()
+    }
+
     fn parse_ident(&mut self) -> AstId {
         let id = match self.cur() {
             Underscore => self.node(AstKind::Void),
@@ -252,10 +271,48 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expr(&mut self) -> AstId {
-        match self.cur() {
+        let base = match self.cur() {
+            LParen => self.parse_tuple_or_group(),
             LCurl => self.parse_struct(),
             _ => self.parse_atom(),
+        };
+        if self.matches([LParen]) {
+            let id = self.node(AstKind::Call);
+            let args = self.parse_args();
+            self.push_child(id, base);
+            self.push_child(id, args);
+            return id;
+        } else if *base.get(&self.ast.kinds) == AstKind::Tuple
+            && !self.matches([Newline, Comma, RParen, RCurl, RSquare])
+        {
+            let id = self.node(AstKind::Func);
+            let body = if self.matches([LCurl]) {
+                self.parse_block()
+            } else {
+                self.parse_expr()
+            };
+            self.push_child(id, base);
+            self.push_child(id, body);
+            return id;
+        } else if self.matches([LCurl]) {
+            if *base.get(&self.ast.kinds) == AstKind::Tuple {
+                let id = self.node(AstKind::Func);
+                let body = if self.matches([LCurl]) {
+                    self.parse_block()
+                } else {
+                    self.parse_expr()
+                };
+                self.push_child(id, base);
+                self.push_child(id, body);
+                return id;
+            }
+            let id = self.node(AstKind::Constructor);
+            let body = self.parse_struct();
+            self.push_child(id, base);
+            self.push_child(id, body);
+            return id;
         }
+        base
     }
 
     fn parse_atom(&mut self) -> AstId {
@@ -285,6 +342,66 @@ impl<'a> Parser<'a> {
         self.merge_loc(id, lcurl_loc);
         self.merge_loc(id, self.cur_loc());
         self.try_eat([RCurl]);
+        id
+    }
+
+    fn parse_block(&mut self) -> AstId {
+        let lcurl_loc = self.cur_loc();
+        self.try_eat([LCurl]);
+        let id = self.parse_list(AstKind::Block, Self::parse_expr);
+        self.merge_loc(id, lcurl_loc);
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat([RCurl]);
+        id
+    }
+
+    fn parse_args(&mut self) -> AstId {
+        let lparen_loc = self.cur_loc();
+        self.try_eat([LParen]);
+        let id = self.parse_list(AstKind::Args, Self::parse_expr);
+        self.merge_loc(id, lparen_loc);
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat([RParen]);
+        id
+    }
+
+    fn parse_tuple_or_group(&mut self) -> AstId {
+        let lparen_loc = self.cur_loc();
+        self.try_eat([LParen]);
+        let id = self.parse_list(AstKind::Tuple, Self::parse_field_or_expr);
+        self.merge_loc(id, lparen_loc);
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat([RParen]);
+
+        if self.num_children(id) == 1 {
+            let field = id.get(&self.ast.children)[0];
+            if *field.get(&self.ast.kinds) == AstKind::Group {
+                *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
+            } else if *field.get(&self.ast.kinds) == AstKind::Field {
+                let expr = field.get(&self.ast.children)[1];
+                match expr.get(&self.ast.kinds) {
+                    AstKind::Tuple => {
+                        *field.get_mut(&mut self.ast.kinds) = AstKind::Call;
+                        *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
+                    }
+                    AstKind::Struct => {
+                        *field.get_mut(&mut self.ast.kinds) = AstKind::Constructor;
+                        *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            for child in id.get(&self.ast.children).clone() {
+                if *child.get(&self.ast.kinds) != AstKind::Field {
+                    self.error_at(
+                        *child.get(&self.ast.locations),
+                        "Expected name for tuple field",
+                    );
+                }
+            }
+        }
+
         id
     }
 }
