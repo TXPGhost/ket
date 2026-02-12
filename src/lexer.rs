@@ -23,6 +23,9 @@ pub enum TokenKind {
     #[token(r":=")]
     ColonEquals,
 
+    #[token(r".=")]
+    DotEquals,
+
     #[token(r"==")]
     EqualsEquals,
 

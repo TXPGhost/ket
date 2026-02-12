@@ -22,24 +22,88 @@ pub enum AstKind {
     None,
     Integer,
     Float,
-    Infix,
     Call,
     Group,
     Func,
     Block,
     Proj,
     Struct,
-    Constructor,
     Tuple,
     Array,
-    Args,
     Field,
+    Bind,
+    BindMut,
+    Assign,
+    If,
+    Infix(InfixKind),
 
     #[default]
     Error,
 }
 
-pub enum InfixKind {}
+impl AstKind {
+    pub fn has_string_data(self) -> bool {
+        matches!(
+            self,
+            Self::LIdent
+                | Self::UIdent
+                | Self::String
+                | Self::Character
+                | Self::Integer
+                | Self::Float
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum InfixKind {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+impl InfixKind {
+    pub fn ast(self) -> AstKind {
+        AstKind::Infix(self)
+    }
+
+    pub fn tok(self) -> TokenKind {
+        match self {
+            InfixKind::Add => Plus,
+            InfixKind::Sub => Minus,
+            InfixKind::Mul => Times,
+            InfixKind::Div => Divide,
+        }
+    }
+}
+
+pub struct PrattGroup<'a> {
+    kinds: &'a [InfixKind],
+    assoc: Assoc,
+}
+
+impl<'a> PrattGroup<'a> {
+    pub fn left(kinds: &'a [InfixKind]) -> Self {
+        Self {
+            kinds,
+            assoc: Assoc::Left,
+        }
+    }
+
+    pub fn right(kinds: &'a [InfixKind]) -> Self {
+        Self {
+            kinds,
+            assoc: Assoc::Right,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Assoc {
+    Left,
+    Right,
+}
 
 #[derive(Default, Debug)]
 pub struct Ast {
@@ -73,15 +137,15 @@ impl Ast {
         print!("{}{} ", "  ".repeat(indent), kind_str.bold());
         let location = id.get(&self.locations);
         if let Some(location) = location
-            && id.get(&self.children).is_empty()
+            && id.get(&self.kinds).has_string_data()
         {
             let slice = &location.file.get(&files.sources)
                 [location.start as usize..location.end as usize]
                 .trim();
-            len += slice.len();
+            len += slice.len() + 1;
             print!("{} ", slice.bold());
         }
-        print!("{} ", " ".repeat(32_usize.saturating_sub(len)));
+        print!("{} ", " ".repeat(36_usize.saturating_sub(len)));
         Location::pretty_print_opt(location, files);
         for child in id.get(&self.children) {
             self.pretty_print_indented(*child, indent + 1, files);
@@ -101,6 +165,13 @@ pub struct Parser<'a> {
     cursor: TokenId,
     ast: &'a mut Ast,
     errors: &'a mut Errors,
+    context: Context,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Context {
+    Struct,
+    Block,
 }
 
 impl<'a> Parser<'a> {
@@ -110,6 +181,7 @@ impl<'a> Parser<'a> {
             cursor: TokenId::new(0),
             ast,
             errors,
+            context: Context::Struct,
         }
     }
 
@@ -167,20 +239,31 @@ impl<'a> Parser<'a> {
         cur
     }
 
-    fn matches<const N: usize>(&self, kinds: [TokenKind; N]) -> bool {
+    fn matches(&self, kinds: &[TokenKind]) -> bool {
         for kind in kinds {
-            if *self.cursor.get(&self.tokens.kinds) == kind {
+            if self.cursor.get(&self.tokens.kinds) == kind {
                 return true;
             }
         }
         false
     }
 
-    fn try_eat<const N: usize>(&mut self, kinds: [TokenKind; N]) -> TokenKind {
+    fn matches_ahead(&mut self, kinds: &[TokenKind], lookahead: usize) -> bool {
+        for _ in 0..lookahead {
+            self.cursor = self.cursor.next().unwrap();
+        }
+        let result = self.matches(kinds);
+        for _ in 0..lookahead {
+            self.cursor = self.cursor.prev().unwrap();
+        }
+        result
+    }
+
+    fn try_eat(&mut self, kinds: &[TokenKind]) -> Option<TokenKind> {
         assert!(!kinds.is_empty());
         for kind in kinds {
-            if *self.cursor.get(&self.tokens.kinds) == kind {
-                return self.eat();
+            if self.cursor.get(&self.tokens.kinds) == kind {
+                return Some(self.eat());
             }
         }
         if kinds.len() == 1 {
@@ -201,14 +284,14 @@ impl<'a> Parser<'a> {
                 self.cur()
             ));
         }
-        self.cur()
+        None
     }
 
-    fn eat_many<const N: usize>(&mut self, kinds: [TokenKind; N]) -> usize {
+    fn eat_many(&mut self, kinds: &[TokenKind]) -> usize {
         let mut count = 0;
         'outer: loop {
             for kind in kinds {
-                if *self.cursor.get(&self.tokens.kinds) == kind {
+                if self.cursor.get(&self.tokens.kinds) == kind {
                     self.eat();
                     count += 1;
                     continue 'outer;
@@ -222,13 +305,13 @@ impl<'a> Parser<'a> {
     fn parse_list(&mut self, kind: AstKind, parser: impl Fn(&mut Self) -> AstId) -> AstId {
         let id = self.node(kind);
         let mut first = true;
-        while !self.eof() && !self.matches([RParen, RSquare, RCurl]) {
+        while !self.eof() && !self.matches(&[RParen, RSquare, RCurl]) {
             if !first {
                 self.merge_loc(id, self.cur_loc());
-                self.try_eat([Comma, Newline, Semicolon]);
+                self.try_eat(&[Comma, Newline, Semicolon]);
             }
-            self.eat_many([Newline]);
-            if self.eof() || self.matches([RParen, RSquare, RCurl]) {
+            self.eat_many(&[Newline]);
+            if self.eof() || self.matches(&[RParen, RSquare, RCurl]) {
                 break;
             }
             let child = parser(self);
@@ -247,13 +330,6 @@ impl<'a> Parser<'a> {
         id
     }
 
-    fn parse_field_or_expr(&mut self) -> AstId {
-        if !self.matches([LIdent, UIdent, Underscore]) {
-            return self.parse_expr();
-        }
-        self.parse_field()
-    }
-
     fn parse_ident(&mut self) -> AstId {
         let id = match self.cur() {
             Underscore => self.node(AstKind::Void),
@@ -270,49 +346,113 @@ impl<'a> Parser<'a> {
         id
     }
 
+    fn parse_stmt(&mut self) -> AstId {
+        if self.matches_ahead(&[Equals, ColonEquals, DotEquals], 1) {
+            let ident = self.parse_ident();
+            let id = match self.try_eat(&[Equals, ColonEquals, DotEquals]) {
+                Some(Equals) => self.node(AstKind::Bind),
+                Some(ColonEquals) => self.node(AstKind::BindMut),
+                Some(DotEquals) => self.node(AstKind::Assign),
+                _ => unreachable!(),
+            };
+            let expr = self.parse_expr();
+            self.push_child(id, ident);
+            self.push_child(id, expr);
+            return id;
+        }
+        self.parse_expr()
+    }
+
     fn parse_expr(&mut self) -> AstId {
-        let base = match self.cur() {
-            LParen => self.parse_tuple_or_group(),
-            LCurl => self.parse_struct(),
+        self.parse_pratt(&[
+            PrattGroup::left(&[InfixKind::Add, InfixKind::Sub]),
+            PrattGroup::left(&[InfixKind::Mul, InfixKind::Div]),
+        ])
+    }
+
+    fn parse_base_expr(&mut self) -> AstId {
+        let base = match (self.cur(), self.context) {
+            (QuestionMark, _) => self.parse_if(),
+            (LParen, Context::Struct) => self.parse_struct(),
+            (LParen, Context::Block) => self.parse_tuple(),
+            (LCurl, _) => self.parse_block(),
             _ => self.parse_atom(),
         };
-        if self.matches([LParen]) {
+        if self.matches(&[LParen]) {
             let id = self.node(AstKind::Call);
-            let args = self.parse_args();
+            let args = self.parse_tuple();
             self.push_child(id, base);
             self.push_child(id, args);
             return id;
-        } else if *base.get(&self.ast.kinds) == AstKind::Tuple
-            && !self.matches([Newline, Comma, RParen, RCurl, RSquare])
+        } else if *base.get(&self.ast.kinds) == AstKind::Struct
+            && !self.matches(&[Newline, Comma, RParen, RCurl, RSquare])
         {
             let id = self.node(AstKind::Func);
-            let body = if self.matches([LCurl]) {
-                self.parse_block()
-            } else {
-                self.parse_expr()
-            };
-            self.push_child(id, base);
-            self.push_child(id, body);
-            return id;
-        } else if self.matches([LCurl]) {
-            if *base.get(&self.ast.kinds) == AstKind::Tuple {
-                let id = self.node(AstKind::Func);
-                let body = if self.matches([LCurl]) {
-                    self.parse_block()
-                } else {
-                    self.parse_expr()
-                };
-                self.push_child(id, base);
-                self.push_child(id, body);
-                return id;
-            }
-            let id = self.node(AstKind::Constructor);
-            let body = self.parse_struct();
+            let body = self.parse_expr();
             self.push_child(id, base);
             self.push_child(id, body);
             return id;
         }
         base
+    }
+
+    fn parse_pratt(&mut self, groups: &[PrattGroup]) -> AstId {
+        match groups {
+            [] => self.parse_base_expr(),
+            _ => {
+                let group = &groups[0];
+                match group.assoc {
+                    Assoc::Left => self.parse_left_recursive_expr(group.kinds, &groups[1..]),
+                    Assoc::Right => self.parse_right_recursive_expr(group.kinds, &groups[1..]),
+                }
+            }
+        }
+    }
+
+    fn parse_left_recursive_expr(
+        &mut self,
+        kinds: &[InfixKind],
+        next_groups: &[PrattGroup],
+    ) -> AstId {
+        let mut id = self.parse_pratt(next_groups);
+        loop {
+            let mut matched = false;
+            for kind in kinds {
+                if self.matches(&[kind.tok()]) {
+                    self.eat();
+                    let infix = self.node(kind.ast());
+                    let next = self.parse_pratt(next_groups);
+                    self.push_child(infix, id);
+                    self.push_child(infix, next);
+                    id = infix;
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                break;
+            }
+        }
+        id
+    }
+
+    fn parse_right_recursive_expr(
+        &mut self,
+        kinds: &[InfixKind],
+        next_groups: &[PrattGroup],
+    ) -> AstId {
+        let id = self.parse_pratt(next_groups);
+        for kind in kinds {
+            if self.matches(&[kind.tok()]) {
+                self.eat();
+                let infix = self.node(kind.ast());
+                let next = self.parse_right_recursive_expr(kinds, next_groups);
+                self.push_child(infix, id);
+                self.push_child(infix, next);
+                return infix;
+            }
+        }
+        id
     }
 
     fn parse_atom(&mut self) -> AstId {
@@ -335,71 +475,62 @@ impl<'a> Parser<'a> {
         id
     }
 
-    fn parse_struct(&mut self) -> AstId {
-        let lcurl_loc = self.cur_loc();
-        self.try_eat([LCurl]);
-        let id = self.parse_list(AstKind::Struct, Self::parse_field);
-        self.merge_loc(id, lcurl_loc);
+    fn parse_delimited_list(
+        &mut self,
+        kind: AstKind,
+        left: TokenKind,
+        right: TokenKind,
+        parser: fn(&mut Self) -> AstId,
+    ) -> AstId {
+        let left_loc = self.cur_loc();
+        self.try_eat(&[left]);
+        let id = self.parse_list(kind, parser);
+        self.merge_loc(id, left_loc);
         self.merge_loc(id, self.cur_loc());
-        self.try_eat([RCurl]);
+        self.try_eat(&[right]);
         id
+    }
+
+    fn parse_struct(&mut self) -> AstId {
+        self.parse_delimited_list(AstKind::Struct, LParen, RParen, Self::parse_field)
     }
 
     fn parse_block(&mut self) -> AstId {
-        let lcurl_loc = self.cur_loc();
-        self.try_eat([LCurl]);
-        let id = self.parse_list(AstKind::Block, Self::parse_expr);
-        self.merge_loc(id, lcurl_loc);
-        self.merge_loc(id, self.cur_loc());
-        self.try_eat([RCurl]);
+        let old_context = self.context;
+        self.context = Context::Block;
+        let id = self.parse_delimited_list(AstKind::Block, LCurl, RCurl, Self::parse_stmt);
+        self.context = old_context;
         id
     }
 
-    fn parse_args(&mut self) -> AstId {
-        let lparen_loc = self.cur_loc();
-        self.try_eat([LParen]);
-        let id = self.parse_list(AstKind::Args, Self::parse_expr);
-        self.merge_loc(id, lparen_loc);
-        self.merge_loc(id, self.cur_loc());
-        self.try_eat([RParen]);
-        id
+    fn parse_tuple(&mut self) -> AstId {
+        self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_expr)
     }
 
-    fn parse_tuple_or_group(&mut self) -> AstId {
-        let lparen_loc = self.cur_loc();
-        self.try_eat([LParen]);
-        let id = self.parse_list(AstKind::Tuple, Self::parse_field_or_expr);
-        self.merge_loc(id, lparen_loc);
-        self.merge_loc(id, self.cur_loc());
-        self.try_eat([RParen]);
+    fn parse_if(&mut self) -> AstId {
+        let id = self.node(AstKind::If);
 
-        if self.num_children(id) == 1 {
-            let field = id.get(&self.ast.children)[0];
-            if *field.get(&self.ast.kinds) == AstKind::Group {
-                *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
-            } else if *field.get(&self.ast.kinds) == AstKind::Field {
-                let expr = field.get(&self.ast.children)[1];
-                match expr.get(&self.ast.kinds) {
-                    AstKind::Tuple => {
-                        *field.get_mut(&mut self.ast.kinds) = AstKind::Call;
-                        *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
-                    }
-                    AstKind::Struct => {
-                        *field.get_mut(&mut self.ast.kinds) = AstKind::Constructor;
-                        *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
-                    }
-                    _ => {}
-                }
-            }
-        } else {
-            for child in id.get(&self.ast.children).clone() {
-                if *child.get(&self.ast.kinds) != AstKind::Field {
-                    self.error_at(
-                        *child.get(&self.ast.locations),
-                        "Expected name for tuple field",
-                    );
-                }
-            }
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat(&[QuestionMark]);
+
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat(&[LParen]);
+
+        let cond = self.parse_expr();
+
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat(&[RParen]);
+
+        let if_body = self.parse_expr();
+
+        self.push_child(id, cond);
+        self.push_child(id, if_body);
+
+        if self.matches(&[Colon]) {
+            self.merge_loc(id, self.cur_loc());
+            self.eat();
+            let else_body = self.parse_expr();
+            self.push_child(id, else_body);
         }
 
         id
