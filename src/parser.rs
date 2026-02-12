@@ -27,10 +27,13 @@ pub enum AstKind {
     Func,
     Block,
     Proj,
+    Index,
     Struct,
     Tuple,
     Array,
+    Vector,
     Field,
+    Optional,
     Bind,
     BindMut,
     Assign,
@@ -170,8 +173,8 @@ pub struct Parser<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Context {
-    Struct,
-    Block,
+    Type,
+    Value,
 }
 
 impl<'a> Parser<'a> {
@@ -181,7 +184,7 @@ impl<'a> Parser<'a> {
             cursor: TokenId::new(0),
             ast,
             errors,
-            context: Context::Struct,
+            context: Context::Type,
         }
     }
 
@@ -371,27 +374,61 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_base_expr(&mut self) -> AstId {
-        let base = match (self.cur(), self.context) {
+        let mut base = match (self.cur(), self.context) {
             (QuestionMark, _) => self.parse_if(),
-            (LParen, Context::Struct) => self.parse_struct(),
-            (LParen, Context::Block) => self.parse_tuple(),
+            (LParen, Context::Type) => self.parse_struct(),
+            (LParen, Context::Value) => self.parse_tuple(),
+            (LSquare, _) => self.parse_array(),
             (LCurl, _) => self.parse_block(),
             _ => self.parse_atom(),
         };
-        if self.matches(&[LParen]) {
-            let id = self.node(AstKind::Call);
-            let args = self.parse_tuple();
-            self.push_child(id, base);
-            self.push_child(id, args);
-            return id;
-        } else if *base.get(&self.ast.kinds) == AstKind::Struct
-            && !self.matches(&[Newline, Comma, RParen, RCurl, RSquare])
-        {
-            let id = self.node(AstKind::Func);
-            let body = self.parse_expr();
-            self.push_child(id, base);
-            self.push_child(id, body);
-            return id;
+        loop {
+            if self.matches(&[LParen]) {
+                let id = self.node(AstKind::Call);
+                let args = self.parse_tuple();
+                self.push_child(id, base);
+                self.push_child(id, args);
+                base = id;
+                continue;
+            }
+            if self.matches(&[LSquare]) {
+                let id = self.node(AstKind::Index);
+                let args = self.parse_index();
+                self.push_child(id, base);
+                self.push_child(id, args);
+                base = id;
+                continue;
+            }
+            if self.matches(&[QuestionMark]) {
+                let id = self.node(AstKind::Optional);
+                self.push_child(id, base);
+                self.eat();
+                if !self.matches(&[
+                    Newline,
+                    Comma,
+                    RParen,
+                    RCurl,
+                    RSquare,
+                    EndOfFile,
+                    QuestionMark,
+                ]) {
+                    let err = self.parse_expr();
+                    self.push_child(id, err);
+                }
+                base = id;
+                continue;
+            }
+            if *base.get(&self.ast.kinds) == AstKind::Struct
+                && !self.matches(&[Newline, Comma, RParen, RCurl, RSquare])
+            {
+                let id = self.node(AstKind::Func);
+                let body = self.parse_expr();
+                self.push_child(id, base);
+                self.push_child(id, body);
+                base = id;
+                continue;
+            }
+            break;
         }
         base
     }
@@ -497,7 +534,7 @@ impl<'a> Parser<'a> {
 
     fn parse_block(&mut self) -> AstId {
         let old_context = self.context;
-        self.context = Context::Block;
+        self.context = Context::Value;
         let id = self.parse_delimited_list(AstKind::Block, LCurl, RCurl, Self::parse_stmt);
         self.context = old_context;
         id
@@ -505,6 +542,33 @@ impl<'a> Parser<'a> {
 
     fn parse_tuple(&mut self) -> AstId {
         self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_expr)
+    }
+
+    fn parse_array(&mut self) -> AstId {
+        let id = self.parse_delimited_list(AstKind::Array, LSquare, RSquare, Self::parse_expr);
+        if self.matches(&[
+            LIdent, UIdent, Underscore, String, Character, Integer, Float, LParen,
+        ]) {
+            if self.num_children(id) > 1 {
+                self.error("Vector expression may not have multiple lengths");
+            }
+            let vec = self.node(AstKind::Vector);
+            let expr = self.parse_expr();
+            self.push_child(vec, id);
+            self.push_child(vec, expr);
+            return vec;
+        }
+        id
+    }
+
+    fn parse_index(&mut self) -> AstId {
+        let left_lsquare = self.cur_loc();
+        self.try_eat(&[LSquare]);
+        let id = self.parse_expr();
+        self.merge_loc(id, left_lsquare);
+        self.merge_loc(id, self.cur_loc());
+        self.try_eat(&[RSquare]);
+        id
     }
 
     fn parse_if(&mut self) -> AstId {

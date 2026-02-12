@@ -38,3 +38,17 @@ Vector3 (
   new(x F32, y F32, z F32) Vector3(x, y, z)
   elts (x F32, y F32, z F32)
 )
+
+test() {
+  call()
+  call()()
+  call()()()
+  call()[0]
+  call()[1]
+  call()[x](42)
+  arr = [1, 2, 3]
+  arr = []
+  arr = []42
+}
+
+Vector3 I32?"error message"

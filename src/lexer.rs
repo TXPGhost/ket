@@ -74,6 +74,9 @@ pub enum TokenKind {
     #[token(r"-")]
     Minus,
 
+    #[token(r"--")]
+    MinusMinus,
+
     #[token(r"*")]
     Times,
 
