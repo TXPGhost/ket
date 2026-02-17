@@ -7,6 +7,8 @@ use crate::{
     arena::{Arena, Id, World},
     file::Files,
     lexer::{Location, TokenKind},
+    prelude::Prelude,
+    types::Type,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -15,7 +17,7 @@ pub enum AstKind {
     UIdent,
     Void,
     String,
-    Character,
+    Char,
     None,
     Integer,
     Float,
@@ -27,6 +29,7 @@ pub enum AstKind {
     Proj,
     Index,
     Struct,
+    Args,
     Tuple,
     Array,
     Vector,
@@ -38,6 +41,7 @@ pub enum AstKind {
     Assign,
     If,
     Infix(InfixKind),
+    PrimitiveType(Type),
 
     #[default]
     Error,
@@ -47,12 +51,7 @@ impl AstKind {
     pub fn has_atomic_data(self) -> bool {
         matches!(
             self,
-            Self::LIdent
-                | Self::UIdent
-                | Self::String
-                | Self::Character
-                | Self::Integer
-                | Self::Float
+            Self::LIdent | Self::UIdent | Self::String | Self::Char | Self::Integer | Self::Float
         )
     }
 }
@@ -87,6 +86,7 @@ pub struct Ast {
     pub children: Arena<Ast, SmallVec<[AstId; 4]>>,
     pub locations: Arena<Ast, Option<Location>>,
     pub qualified_idents: Arena<Ast, String>,
+    pub resolved_idents: Arena<Ast, Option<AstId>>,
 }
 pub type AstId = Id<Ast>;
 
@@ -117,6 +117,7 @@ impl Ast {
         locations: &Arena<Ast, Option<Location>>,
         qualified_idents: &mut Arena<Ast, String>,
         qualified_idents_map: &mut HashMap<String, AstId>,
+        resolved_idents: &mut Arena<Ast, Option<AstId>>,
         unresolved: &mut Vec<AstId>,
     ) {
         if matches!(id.get(kinds), AstKind::Field) {
@@ -129,6 +130,7 @@ impl Ast {
             let path = format!("{path}.{slice}");
             ident.put(qualified_idents, path.clone());
             qualified_idents_map.insert(path.clone(), ident);
+            ident.put(resolved_idents, Some(id.get(children)[1]));
             Self::qualify_helper(
                 id.get(children)[1],
                 &path,
@@ -138,6 +140,7 @@ impl Ast {
                 locations,
                 qualified_idents,
                 qualified_idents_map,
+                resolved_idents,
                 unresolved,
             );
         } else if matches!(id.get(kinds), AstKind::Block) {
@@ -154,6 +157,7 @@ impl Ast {
                     locations,
                     qualified_idents,
                     qualified_idents_map,
+                    resolved_idents,
                     unresolved,
                 );
             }
@@ -167,6 +171,7 @@ impl Ast {
                 locations,
                 qualified_idents,
                 qualified_idents_map,
+                resolved_idents,
                 unresolved,
             );
         } else if matches!(id.get(kinds), AstKind::Bind) {
@@ -179,6 +184,7 @@ impl Ast {
             let path = format!("{path}.{slice}");
             lhs.put(qualified_idents, path.clone());
             qualified_idents_map.insert(path.clone(), lhs);
+            lhs.put(resolved_idents, Some(id.get(children)[1]));
             Self::qualify_helper(
                 id.get(children)[1],
                 &path,
@@ -188,6 +194,7 @@ impl Ast {
                 locations,
                 qualified_idents,
                 qualified_idents_map,
+                resolved_idents,
                 unresolved,
             );
         } else if matches!(id.get(kinds), AstKind::LIdent | AstKind::UIdent) {
@@ -210,6 +217,7 @@ impl Ast {
                     locations,
                     qualified_idents,
                     qualified_idents_map,
+                    resolved_idents,
                     unresolved,
                 );
             }
@@ -220,6 +228,7 @@ impl Ast {
         kinds: &Arena<Ast, AstKind>,
         qualified_idents: &mut Arena<Ast, String>,
         qualified_idents_map: &mut HashMap<String, AstId>,
+        resolved_idents: &mut Arena<Ast, Option<AstId>>,
         unresolved: &Vec<AstId>,
     ) {
         for id in unresolved {
@@ -228,8 +237,9 @@ impl Ast {
                 let mut ident = id.get(qualified_idents).to_owned();
                 loop {
                     // If we find an exact match, go with that
-                    if qualified_idents_map.get(ident.as_str()).is_some() {
+                    if let Some(rid) = qualified_idents_map.get(ident.as_str()) {
                         id.put(qualified_idents, ident);
+                        id.put(resolved_idents, Some(*rid));
                         break;
                     }
 
@@ -248,10 +258,12 @@ impl Ast {
         }
     }
 
-    pub fn compute_qualified_idents(&mut self, files: &Files, root: AstId) {
+    pub fn qualify_and_resolve(&mut self, files: &Files, root: AstId, prelude: impl Prelude) {
         let mut qualified_idents = Arena::new();
         let mut qualified_idents_map = HashMap::new();
+        let mut resolved_idents = Arena::new();
         let mut unresolved = Vec::new();
+        prelude.apply(&mut self.ids, &mut self.kinds, &mut qualified_idents_map);
         Self::qualify_helper(
             root,
             "",
@@ -261,6 +273,7 @@ impl Ast {
             &self.locations,
             &mut qualified_idents,
             &mut qualified_idents_map,
+            &mut resolved_idents,
             &mut unresolved,
         );
         self.qualified_idents = qualified_idents;
@@ -268,19 +281,21 @@ impl Ast {
             &self.kinds,
             &mut self.qualified_idents,
             &mut qualified_idents_map,
+            &mut resolved_idents,
             &unresolved,
         );
+        self.resolved_idents = resolved_idents;
     }
 
     fn pretty_print_indented(&self, id: AstId, indent: usize, files: &Files) {
         let kind_str = format!("{:?}", id.get(&self.kinds));
         let mut len = indent * 2 + kind_str.len();
-        print!("{}{} ", "  ".repeat(indent), kind_str.bold());
+        print!("{}{} ", "  ".repeat(indent), kind_str.bold().magenta());
         let location = id.get(&self.locations);
         let qualified = id.get(&self.qualified_idents);
         if !qualified.is_empty() {
             len += qualified.len() + 1;
-            print!("{} ", qualified.bold());
+            print!("{} ", qualified.green());
         } else if let Some(location) = location
             && id.get(&self.kinds).has_atomic_data()
         {
@@ -288,7 +303,7 @@ impl Ast {
                 [location.start as usize..location.end as usize]
                 .trim();
             len += slice.len() + 1;
-            print!("{} ", slice.bold());
+            print!("{} ", slice);
         }
         print!("{} ", " ".repeat(36_usize.saturating_sub(len)));
         Location::pretty_print_opt(location, files);
@@ -298,6 +313,7 @@ impl Ast {
     }
 
     pub fn pretty_print(&mut self, id: AstId, files: &Files) {
+        println!();
         self.compute_locations(id);
         self.pretty_print_indented(id, 0, files);
     }

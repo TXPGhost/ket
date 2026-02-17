@@ -328,6 +328,7 @@ impl<'a> Parser<'a> {
             if *base.get(&self.ast.kinds) == AstKind::Struct
                 && !self.matches(&[Newline, Comma, RParen, RCurl, RSquare])
             {
+                base.put(&mut self.ast.kinds, AstKind::Args);
                 let id = self.node(AstKind::Func);
                 let body = self.parse_expr();
                 self.push_child(id, base);
@@ -404,7 +405,7 @@ impl<'a> Parser<'a> {
             Integer => self.node(AstKind::Integer),
             Float => self.node(AstKind::Float),
             String => self.node(AstKind::String),
-            Character => self.node(AstKind::Character),
+            Char => self.node(AstKind::Char),
             Underscore => self.node(AstKind::None),
             LIdent => self.node(AstKind::LIdent),
             UIdent => self.node(AstKind::UIdent),
@@ -454,7 +455,7 @@ impl<'a> Parser<'a> {
     fn parse_array(&mut self) -> AstId {
         let id = self.parse_delimited_list(AstKind::Array, LSquare, RSquare, Self::parse_expr);
         if self.matches(&[
-            LIdent, UIdent, Underscore, String, Character, Integer, Float, LParen,
+            LIdent, UIdent, Underscore, String, Char, Integer, Float, LParen,
         ]) {
             if self.num_children(id) > 1 {
                 self.error("Vector expression may not have multiple lengths");

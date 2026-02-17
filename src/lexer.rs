@@ -141,7 +141,7 @@ pub enum TokenKind {
     String,
 
     #[regex(r#"[']([^'\\\n]|\\.|\\\n)*[']"#)]
-    Character,
+    Char,
 
     Unknown,
 

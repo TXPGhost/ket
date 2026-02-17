@@ -14,6 +14,8 @@ use crate::{
     file::{Files, read_file},
     lexer::lex_file,
     parser::Parser,
+    prelude::StandardPrelude,
+    types::Types,
 };
 
 pub mod arena;
@@ -22,6 +24,8 @@ pub mod error;
 pub mod file;
 pub mod lexer;
 pub mod parser;
+pub mod prelude;
+pub mod types;
 
 fn clear() {
     print!("\x1B[2J\x1B[1;1H");
@@ -32,6 +36,7 @@ fn compile(filename: Arc<str>) {
     let mut errors = Errors::default();
     let mut files = Files::default();
     let mut ast = Ast::default();
+    let mut types = Types::default();
 
     let filenames = [filename];
 
@@ -47,17 +52,19 @@ fn compile(filename: Arc<str>) {
         if let Some(file) = file {
             let tokens = lex_file(file, &files, &mut errors);
             let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
-            ast.compute_qualified_idents(&files, root);
+            ast.qualify_and_resolve(&files, root, StandardPrelude);
             ast.pretty_print(root, &files);
+            types.compute_types(&ast);
+            types.pretty_print(&ast);
         }
     }
 
     let elapsed = begin.elapsed().as_secs_f32();
     if errors.has_errors() {
         errors.pretty_print(&files);
-        println!("Finished with errors in in {:.4} secs", elapsed);
+        println!("\nFinished with errors in in {:.4} secs", elapsed);
     } else {
-        println!("Finished in {:.4} secs", elapsed);
+        println!("\nFinished in {:.4} secs", elapsed);
     }
 }
 
