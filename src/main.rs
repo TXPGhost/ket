@@ -9,13 +9,15 @@ use colored::Colorize;
 use notify::RecursiveMode;
 
 use crate::{
+    ast::Ast,
     error::Errors,
     file::{Files, read_file},
     lexer::lex_file,
-    parser::{Ast, Parser},
+    parser::Parser,
 };
 
 pub mod arena;
+pub mod ast;
 pub mod error;
 pub mod file;
 pub mod lexer;

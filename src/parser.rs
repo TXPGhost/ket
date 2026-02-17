@@ -1,85 +1,12 @@
-use colored::Colorize;
-use smallvec::SmallVec;
-
 use crate::{
-    arena::{Arena, Id, World},
+    ast::{Ast, AstId, AstKind, InfixKind},
     error::{ErrorKind, Errors},
-    file::Files,
     lexer::{
         Location, TokenId,
         TokenKind::{self, *},
         Tokens,
     },
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum AstKind {
-    LIdent,
-    UIdent,
-    Void,
-    String,
-    Character,
-    None,
-    Integer,
-    Float,
-    Call,
-    Group,
-    Func,
-    Block,
-    Proj,
-    Index,
-    Struct,
-    Tuple,
-    Array,
-    Vector,
-    Field,
-    Optional,
-    Bind,
-    BindMut,
-    Assign,
-    If,
-    Infix(InfixKind),
-
-    #[default]
-    Error,
-}
-
-impl AstKind {
-    pub fn has_string_data(self) -> bool {
-        matches!(
-            self,
-            Self::LIdent
-                | Self::UIdent
-                | Self::String
-                | Self::Character
-                | Self::Integer
-                | Self::Float
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum InfixKind {
-    Add,
-    Sub,
-    Mul,
-    Div,
-}
-
-impl InfixKind {
-    pub fn ast(self) -> AstKind {
-        AstKind::Infix(self)
-    }
-
-    pub fn tok(self) -> TokenKind {
-        match self {
-            InfixKind::Add => Plus,
-            InfixKind::Sub => Minus,
-            InfixKind::Mul => Times,
-            InfixKind::Div => Divide,
-        }
-    }
-}
 
 pub struct PrattGroup<'a> {
     kinds: &'a [InfixKind],
@@ -108,59 +35,6 @@ pub enum Assoc {
     Right,
 }
 
-#[derive(Default, Debug)]
-pub struct Ast {
-    pub ids: World<Ast>,
-    pub kinds: Arena<Ast, AstKind>,
-    pub children: Arena<Ast, SmallVec<[AstId; 4]>>,
-    pub locations: Arena<Ast, Option<Location>>,
-}
-pub type AstId = Id<Ast>;
-
-impl Ast {
-    fn compute_locations(&mut self, root: AstId) {
-        fn helper(
-            id: AstId,
-            locations: &mut Arena<Ast, Option<Location>>,
-            children: &Arena<Ast, SmallVec<[AstId; 4]>>,
-        ) {
-            let mut location = *id.get(locations);
-            for child in id.get(children) {
-                helper(*child, locations, children);
-                location = Location::merge(&location, child.get(locations));
-            }
-            id.put(locations, location);
-        }
-        helper(root, &mut self.locations, &self.children)
-    }
-
-    fn pretty_print_indented(&self, id: AstId, indent: usize, files: &Files) {
-        let kind_str = format!("{:?}", id.get(&self.kinds));
-        let mut len = indent * 2 + kind_str.len();
-        print!("{}{} ", "  ".repeat(indent), kind_str.bold());
-        let location = id.get(&self.locations);
-        if let Some(location) = location
-            && id.get(&self.kinds).has_string_data()
-        {
-            let slice = &location.file.get(&files.sources)
-                [location.start as usize..location.end as usize]
-                .trim();
-            len += slice.len() + 1;
-            print!("{} ", slice.bold());
-        }
-        print!("{} ", " ".repeat(36_usize.saturating_sub(len)));
-        Location::pretty_print_opt(location, files);
-        for child in id.get(&self.children) {
-            self.pretty_print_indented(*child, indent + 1, files);
-        }
-    }
-
-    pub fn pretty_print(&mut self, id: AstId, files: &Files) {
-        self.compute_locations(id);
-        self.pretty_print_indented(id, 0, files);
-    }
-}
-
 impl TokenId {}
 
 pub struct Parser<'a> {
@@ -168,11 +42,11 @@ pub struct Parser<'a> {
     cursor: TokenId,
     ast: &'a mut Ast,
     errors: &'a mut Errors,
-    context: Context,
+    ctx: ParserCtx,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Context {
+enum ParserCtx {
     Type,
     Value,
 }
@@ -184,7 +58,7 @@ impl<'a> Parser<'a> {
             cursor: TokenId::new(0),
             ast,
             errors,
-            context: Context::Type,
+            ctx: ParserCtx::Type,
         }
     }
 
@@ -350,20 +224,20 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_stmt(&mut self) -> AstId {
-        if self.matches_ahead(&[Equals, ColonEquals, DotEquals], 1) {
-            let ident = self.parse_ident();
+        let lhs = self.parse_expr();
+        if self.matches(&[Equals, ColonEquals, DotEquals]) {
             let id = match self.try_eat(&[Equals, ColonEquals, DotEquals]) {
                 Some(Equals) => self.node(AstKind::Bind),
                 Some(ColonEquals) => self.node(AstKind::BindMut),
                 Some(DotEquals) => self.node(AstKind::Assign),
                 _ => unreachable!(),
             };
-            let expr = self.parse_expr();
-            self.push_child(id, ident);
-            self.push_child(id, expr);
+            let rhs = self.parse_expr();
+            self.push_child(id, lhs);
+            self.push_child(id, rhs);
             return id;
         }
-        self.parse_expr()
+        lhs
     }
 
     fn parse_expr(&mut self) -> AstId {
@@ -374,10 +248,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_base_expr(&mut self) -> AstId {
-        let mut base = match (self.cur(), self.context) {
+        let mut base = match (self.cur(), self.ctx) {
             (QuestionMark, _) => self.parse_if(),
-            (LParen, Context::Type) => self.parse_struct(),
-            (LParen, Context::Value) => self.parse_tuple(),
+            (LParen, ParserCtx::Type) => self.parse_struct(),
+            (LParen, ParserCtx::Value) => self.parse_tuple(),
             (LSquare, _) => self.parse_array(),
             (LCurl, _) => self.parse_block(),
             _ => self.parse_atom(),
@@ -396,6 +270,15 @@ impl<'a> Parser<'a> {
                 let args = self.parse_index();
                 self.push_child(id, base);
                 self.push_child(id, args);
+                base = id;
+                continue;
+            }
+            if self.matches(&[Dot]) {
+                let id = self.node(AstKind::Proj);
+                self.eat();
+                let ident = self.parse_ident();
+                self.push_child(id, base);
+                self.push_child(id, ident);
                 base = id;
                 continue;
             }
@@ -533,10 +416,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block(&mut self) -> AstId {
-        let old_context = self.context;
-        self.context = Context::Value;
+        let old_context = self.ctx;
+        self.ctx = ParserCtx::Value;
         let id = self.parse_delimited_list(AstKind::Block, LCurl, RCurl, Self::parse_stmt);
-        self.context = old_context;
+        self.ctx = old_context;
         id
     }
 
