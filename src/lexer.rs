@@ -32,6 +32,12 @@ pub enum TokenKind {
     #[token(r"!=")]
     NotEquals,
 
+    #[token(r"<=")]
+    LAngleEquals,
+
+    #[token(r">=")]
+    RAngleEquals,
+
     #[token(r"..")]
     DotDot,
 
@@ -211,7 +217,6 @@ impl Location {
                 },
             )
             .bright_black()
-            .bold()
         );
     }
 

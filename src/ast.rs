@@ -29,7 +29,6 @@ pub enum AstKind {
     Proj,
     Index,
     Struct,
-    Args,
     Tuple,
     Array,
     Vector,
@@ -40,6 +39,7 @@ pub enum AstKind {
     BindMut,
     Assign,
     If,
+    IfElse,
     Infix(InfixKind),
     PrimitiveType(Type),
 
@@ -62,6 +62,12 @@ pub enum InfixKind {
     Sub,
     Mul,
     Div,
+    Gt,
+    Lt,
+    Ge,
+    Le,
+    Eq,
+    Ne,
 }
 
 impl InfixKind {
@@ -75,6 +81,13 @@ impl InfixKind {
             InfixKind::Sub => TokenKind::Minus,
             InfixKind::Mul => TokenKind::Times,
             InfixKind::Div => TokenKind::Divide,
+
+            InfixKind::Gt => TokenKind::RAngle,
+            InfixKind::Lt => TokenKind::LAngle,
+            InfixKind::Ge => TokenKind::RAngleEquals,
+            InfixKind::Le => TokenKind::LAngleEquals,
+            InfixKind::Eq => TokenKind::EqualsEquals,
+            InfixKind::Ne => TokenKind::NotEquals,
         }
     }
 }
@@ -288,6 +301,16 @@ impl Ast {
     }
 
     fn pretty_print_indented(&self, id: AstId, indent: usize, files: &Files) {
+        let index_str = id.index().to_string();
+        print!(
+            "{} ",
+            format!(
+                "[{}{}]",
+                " ".repeat(3_usize.saturating_sub(index_str.len())),
+                id.index()
+            )
+            .bright_black()
+        );
         let kind_str = format!("{:?}", id.get(&self.kinds));
         let mut len = indent * 2 + kind_str.len();
         print!("{}{} ", "  ".repeat(indent), kind_str.bold().magenta());

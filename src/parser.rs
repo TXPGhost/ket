@@ -257,6 +257,8 @@ impl<'a> Parser<'a> {
         self.parse_pratt(&[
             PrattGroup::left(&[InfixKind::Add, InfixKind::Sub]),
             PrattGroup::left(&[InfixKind::Mul, InfixKind::Div]),
+            PrattGroup::left(&[InfixKind::Gt, InfixKind::Lt, InfixKind::Ge, InfixKind::Le]),
+            PrattGroup::left(&[InfixKind::Eq, InfixKind::Ne]),
         ])
     }
 
@@ -295,7 +297,10 @@ impl<'a> Parser<'a> {
                 base = id;
                 continue;
             }
-            if self.matches(&[Colon]) {
+            if self.matches(&[Colon])
+                && self.matches_ahead(&[LIdent, UIdent], 1)
+                && self.matches_ahead(&[LParen], 2)
+            {
                 let id = self.node(AstKind::Method);
                 self.eat();
                 let ident = self.parse_ident();
@@ -328,7 +333,7 @@ impl<'a> Parser<'a> {
             if *base.get(&self.ast.kinds) == AstKind::Struct
                 && !self.matches(&[Newline, Comma, RParen, RCurl, RSquare])
             {
-                base.put(&mut self.ast.kinds, AstKind::Args);
+                base.put(&mut self.ast.kinds, AstKind::Tuple);
                 let id = self.node(AstKind::Func);
                 let body = self.parse_expr();
                 self.push_child(id, base);
@@ -499,6 +504,7 @@ impl<'a> Parser<'a> {
         self.push_child(id, if_body);
 
         if self.matches(&[Colon]) {
+            id.put(&mut self.ast.kinds, AstKind::IfElse);
             self.merge_loc(id, self.cur_loc());
             self.eat();
             let else_body = self.parse_expr();

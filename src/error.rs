@@ -11,6 +11,7 @@ pub enum ErrorKind {
     Io,
     Lex,
     Parse,
+    Type,
 
     #[default]
     Unknown,
@@ -88,6 +89,14 @@ impl<'a> ErrorRef<'a> {
     pub fn location(self, location: Location) -> Self {
         self.id.put(&mut self.errors.locations, Some(location));
         self
+    }
+
+    pub fn location_opt(self, location: Option<Location>) -> Self {
+        if let Some(location) = location {
+            self.location(location)
+        } else {
+            self
+        }
     }
 
     pub fn caused_by(self, kind: ErrorKind, message: impl Into<String>) -> Self {

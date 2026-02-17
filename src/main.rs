@@ -54,13 +54,14 @@ fn compile(filename: Arc<str>) {
             let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
             ast.qualify_and_resolve(&files, root, StandardPrelude);
             ast.pretty_print(root, &files);
-            types.compute_types(&ast);
+            types.compute_types(&ast, &mut errors);
             types.pretty_print(&ast);
         }
     }
 
     let elapsed = begin.elapsed().as_secs_f32();
     if errors.has_errors() {
+        println!();
         errors.pretty_print(&files);
         println!("\nFinished with errors in in {:.4} secs", elapsed);
     } else {

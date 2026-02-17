@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::marker::PhantomData;
 use std::num::NonZero;
 
@@ -112,6 +113,12 @@ impl<M, I: Index> Copy for Id<M, I> {}
 impl<M, I: Index> Debug for Id<M, I> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}({})", std::any::type_name::<M>(), self.0.into_usize())
+    }
+}
+
+impl<M, I: Index> Hash for Id<M, I> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.index().hash(state);
     }
 }
 
