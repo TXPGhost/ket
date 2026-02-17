@@ -223,6 +223,19 @@ impl<'a> Parser<'a> {
         id
     }
 
+    fn parse_arg(&mut self) -> AstId {
+        if self.matches_ahead(&[TokenKind::Equals], 1) {
+            let id = self.node(AstKind::Arg);
+            let ident = self.parse_ident();
+            self.eat();
+            let expr = self.parse_expr();
+            self.push_child(id, ident);
+            self.push_child(id, expr);
+            return id;
+        }
+        self.parse_expr()
+    }
+
     fn parse_stmt(&mut self) -> AstId {
         let lhs = self.parse_expr();
         if self.matches(&[Equals, ColonEquals, DotEquals]) {
@@ -279,6 +292,17 @@ impl<'a> Parser<'a> {
                 let ident = self.parse_ident();
                 self.push_child(id, base);
                 self.push_child(id, ident);
+                base = id;
+                continue;
+            }
+            if self.matches(&[Colon]) {
+                let id = self.node(AstKind::Method);
+                self.eat();
+                let ident = self.parse_ident();
+                let args = self.parse_tuple();
+                self.push_child(id, base);
+                self.push_child(id, ident);
+                self.push_child(id, args);
                 base = id;
                 continue;
             }
@@ -424,7 +448,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tuple(&mut self) -> AstId {
-        self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_expr)
+        self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_arg)
     }
 
     fn parse_array(&mut self) -> AstId {

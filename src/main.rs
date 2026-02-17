@@ -47,6 +47,7 @@ fn compile(filename: Arc<str>) {
         if let Some(file) = file {
             let tokens = lex_file(file, &files, &mut errors);
             let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
+            ast.compute_qualified_idents(&files, root);
             ast.pretty_print(root, &files);
         }
     }
