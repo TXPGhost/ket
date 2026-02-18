@@ -152,6 +152,15 @@ impl<M, I: Index> Id<M, I> {
         self
     }
 
+    /// Takes a value out of the [Arena] slot referenced by this [Id], replacing it with the
+    /// [Default] value.
+    pub fn take<T: Default>(self, arena: &mut Arena<M, T, I>) -> T {
+        while arena.buf.len() <= self.0.into_usize() {
+            arena.buf.push(T::default());
+        }
+        std::mem::take(&mut arena.buf[self.0.into_usize()])
+    }
+
     /// Constructs a new [Id] from an index.
     pub fn new(index: usize) -> Self {
         if index >= I::MAX {

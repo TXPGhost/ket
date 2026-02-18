@@ -5,6 +5,7 @@ use smallvec::SmallVec;
 
 use crate::{
     arena::{Arena, Id, World},
+    error::{ErrorKind, Errors},
     file::Files,
     lexer::{Location, TokenKind},
     prelude::Prelude,
@@ -31,6 +32,7 @@ pub enum AstKind {
     Struct,
     Tuple,
     Array,
+    Repeat,
     Vector,
     Field,
     Arg,
@@ -92,6 +94,13 @@ impl InfixKind {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Literal {
+    Integer(i64),
+    String(String),
+    Char(u8),
+}
+
 #[derive(Default, Debug)]
 pub struct Ast {
     pub ids: World<Ast>,
@@ -100,6 +109,7 @@ pub struct Ast {
     pub locations: Arena<Ast, Option<Location>>,
     pub qualified_idents: Arena<Ast, String>,
     pub resolved_idents: Arena<Ast, Option<AstId>>,
+    pub literals: Arena<Ast, Option<Literal>>,
 }
 pub type AstId = Id<Ast>;
 
@@ -298,6 +308,37 @@ impl Ast {
             &unresolved,
         );
         self.resolved_idents = resolved_idents;
+    }
+
+    pub fn simplify(&mut self, root: AstId) {
+        for i in 0..root.get(&self.children).len() {
+            let child = root.get(&self.children)[i];
+            self.simplify(child);
+            if *child.get(&self.kinds) == AstKind::Group {
+                root.get_mut(&mut self.children)[i] = child.get(&self.children)[0];
+            }
+        }
+    }
+
+    pub fn parse_literals(&mut self, files: &Files, errors: &mut Errors) {
+        for id in self.ids.iter() {
+            if let Some(location) = id.get(&self.locations) {
+                let slice = &location.file.get(&files.sources)
+                    [location.start as usize..location.end as usize]
+                    .trim();
+                match id.get(&self.kinds) {
+                    AstKind::Integer => match slice.parse::<i64>() {
+                        Ok(v) => {
+                            id.put(&mut self.literals, Some(Literal::Integer(v)));
+                        }
+                        Err(e) => {
+                            errors.log(ErrorKind::Parse, format!("failed to parse integer: {e}"));
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
     }
 
     fn pretty_print_indented(&self, id: AstId, indent: usize, files: &Files) {

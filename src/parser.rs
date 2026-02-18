@@ -454,7 +454,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_tuple(&mut self) -> AstId {
-        self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_arg)
+        let id = self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_arg);
+        if self.num_children(id) == 1 {
+            *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
+        }
+        id
     }
 
     fn parse_array(&mut self) -> AstId {
@@ -462,14 +466,18 @@ impl<'a> Parser<'a> {
         if self.matches(&[
             LIdent, UIdent, Underscore, String, Char, Integer, Float, LParen,
         ]) {
-            if self.num_children(id) > 1 {
-                self.error("Vector expression may not have multiple lengths");
-            }
-            let vec = self.node(AstKind::Vector);
             let expr = self.parse_expr();
-            self.push_child(vec, id);
-            self.push_child(vec, expr);
-            return vec;
+            if self.num_children(id) == 0 {
+                *id.get_mut(&mut self.ast.kinds) = AstKind::Vector;
+                self.push_child(id, expr);
+            } else {
+                if self.num_children(id) > 1 {
+                    self.error("Repeat expression may not have multiple lengths");
+                    id.get_mut(&mut self.ast.children).truncate(1);
+                }
+                *id.get_mut(&mut self.ast.kinds) = AstKind::Repeat;
+                self.push_child(id, expr);
+            }
         }
         id
     }

@@ -4,7 +4,7 @@ use colored::Colorize;
 
 use crate::{
     arena::{Arena, Id, World},
-    ast::{Ast, AstId, AstKind, InfixKind},
+    ast::{Ast, AstId, AstKind, InfixKind, Literal},
     error::{ErrorKind, Errors},
 };
 
@@ -21,6 +21,9 @@ pub enum Type {
     I32,
     F32,
     Bool,
+
+    // Constants
+    ConstI32(i64),
 
     // Compound types
     Struct,
@@ -87,6 +90,8 @@ impl Types {
             (Type::None, Type::None) => true,
             (Type::String, Type::String) => true,
             (Type::I32, Type::I32) => true,
+            (Type::ConstI32(_), Type::I32) => true,
+            (Type::ConstI32(x), Type::ConstI32(y)) => x == y,
             (Type::Bool, Type::Bool) => true,
             (Type::Struct, Type::Struct) => lhs == rhs,
             (Type::Tuple, Type::Tuple) => {
@@ -101,6 +106,15 @@ impl Types {
                     }
                 }
                 true
+            }
+            (Type::Array(n1), Type::Array(n2)) => {
+                if n1 != n2 {
+                    return false;
+                }
+                self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
+            }
+            (Type::Array(_), Type::Vector) => {
+                self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
             }
             (Type::Func, Type::Func) => {
                 let lhs_children = lhs.get(&self.children);
@@ -129,68 +143,31 @@ impl Types {
         self.subtype(lhs, rhs) && self.subtype(rhs, lhs)
     }
 
-    fn union(&mut self, lhs: AstId, rhs: AstId) -> TypeId {
-        let lhs_tid = lhs.get(&self.assignments).unwrap();
-        let rhs_tid = lhs.get(&self.assignments).unwrap();
-        if self.equal(lhs_tid, rhs_tid) {
-            return lhs_tid;
+    fn union(&mut self, lhs: TypeId, rhs: TypeId) -> TypeId {
+        if self.equal(lhs, rhs) {
+            return lhs;
         }
-        match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
-            (Type::Any, _) => lhs_tid,
-            (_, Type::Any) => rhs_tid,
-            (Type::Never, _) => {
-                println!("merge");
-                lhs.put(&mut self.assignments, Some(rhs_tid));
-                rhs_tid
-            }
-            (_, Type::Never) => {
-                println!("merge");
-                rhs.put(&mut self.assignments, Some(lhs_tid));
-                lhs_tid
-            }
-            _ => {
-                println!(
-                    "unimplemented: union of {:?} ({}) and {:?} ({})",
-                    lhs_tid.get(&self.types),
-                    lhs_tid.index(),
-                    rhs_tid.get(&self.types),
-                    rhs_tid.index(),
-                );
-                lhs_tid
-            }
+        if self.subtype(lhs, rhs) {
+            return rhs;
         }
-    }
-
-    fn intersect(&mut self, lhs: AstId, rhs: AstId) -> TypeId {
-        let lhs_tid = lhs.get(&self.assignments).unwrap();
-        let rhs_tid = lhs.get(&self.assignments).unwrap();
-        if self.equal(lhs_tid, rhs_tid) {
-            return lhs_tid;
+        if self.supertype(lhs, rhs) {
+            return lhs;
         }
-        match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
-            (Type::Never, _) => lhs_tid,
-            (_, Type::Never) => rhs_tid,
-            (Type::Any, _) => {
-                println!("merge");
-                lhs.put(&mut self.assignments, Some(rhs_tid));
-                rhs_tid
+        let tid = self.ids.alloc();
+        let ty = match (*lhs.get(&self.types), *rhs.get(&self.types)) {
+            (Type::ConstI32(x), Type::ConstI32(y)) if x == y => Type::ConstI32(x),
+            (Type::ConstI32(_) | Type::I32, Type::ConstI32(_) | Type::I32) => Type::I32,
+            (Type::Array(x), Type::Array(y)) => {
+                let lhs_child = lhs.get(&self.children)[0];
+                let rhs_child = lhs.get(&self.children)[0];
+                let child = self.union(lhs_child, rhs_child);
+                tid.get_mut(&mut self.children).push(child);
+                if x == y { Type::Array(x) } else { Type::Vector }
             }
-            (_, Type::Any) => {
-                println!("merge");
-                rhs.put(&mut self.assignments, Some(lhs_tid));
-                lhs_tid
-            }
-            _ => {
-                println!(
-                    "unimplemented: intersection of {:?} ({}) and {:?} ({})",
-                    lhs_tid.get(&self.types),
-                    lhs_tid.index(),
-                    rhs_tid.get(&self.types),
-                    rhs_tid.index(),
-                );
-                lhs_tid
-            }
-        }
+            _ => Type::Unknown,
+        };
+        *tid.get_mut(&mut self.types) = ty;
+        tid
     }
 
     fn compute(&mut self, ast: &Ast, errors: &mut Errors, id: AstId) -> TypeId {
@@ -214,7 +191,13 @@ impl Types {
             AstKind::String => self.assign_new(id, Type::String),
             AstKind::Char => self.assign_new(id, Type::Char),
             AstKind::None => self.assign_new(id, Type::None),
-            AstKind::Integer => self.assign_new(id, Type::I32),
+            AstKind::Integer => {
+                if let Some(Literal::Integer(v)) = id.get(&ast.literals) {
+                    self.assign_new(id, Type::ConstI32(*v))
+                } else {
+                    self.assign_new(id, Type::I32)
+                }
+            }
             AstKind::Float => self.assign_new(id, Type::F32),
             AstKind::Call => {
                 let func = id.get(&ast.children)[0];
@@ -228,7 +211,7 @@ impl Types {
 
                 if *func_ty.get(&self.types) != Type::Func {
                     errors
-                        .log(ErrorKind::Type, "cannot call non-function type")
+                        .log(ErrorKind::Type, "Cannot call non-function type")
                         .location_opt(*id.get(&ast.locations));
                     return self.assign_new(id, Type::Unknown);
                 }
@@ -238,7 +221,7 @@ impl Types {
 
                 if !self.subtype(args_ty, func_args_ty) {
                     errors
-                        .log(ErrorKind::Type, "argument type mismatch")
+                        .log(ErrorKind::Type, "Argument type mismatch")
                         .location_opt(*args.get(&ast.locations));
                     self.assign_new(id, Type::Unknown)
                 } else {
@@ -246,7 +229,7 @@ impl Types {
                 }
             }
             AstKind::Method => todo!(),
-            AstKind::Group => todo!(),
+            AstKind::Group => self.assign_new(id, Type::Unknown),
             AstKind::Func => {
                 let tid = self.assign_new(id, Type::Any);
 
@@ -296,7 +279,9 @@ impl Types {
                     if let Some(old_child_tid) = old_child_tid
                         && !self.equal(old_child_tid, child_tid)
                     {
-                        errors.log(ErrorKind::Type, "array type mismatch");
+                        errors
+                            .log(ErrorKind::Type, "Array type mismatch")
+                            .location_opt(*id.get(&ast.locations));
                         return self.assign_new(id, Type::Unknown);
                     }
                     old_child_tid = Some(child_tid);
@@ -306,7 +291,23 @@ impl Types {
                 }
                 tid
             }
-            AstKind::Vector => todo!(),
+            AstKind::Repeat => {
+                let len_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
+                let expr_tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                let tid = if let Type::ConstI32(n) = *len_tid.get(&self.types) {
+                    self.assign_new(id, Type::Array(n as usize))
+                } else {
+                    self.assign_new(id, Type::Vector)
+                };
+                tid.get_mut(&mut self.children).push(expr_tid);
+                tid
+            }
+            AstKind::Vector => {
+                let expr_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
+                let tid = self.assign_new(id, Type::Vector);
+                tid.get_mut(&mut self.children).push(expr_tid);
+                tid
+            }
             AstKind::Field => self.compute(ast, errors, id.get(&ast.children)[1]),
             AstKind::Arg => todo!(),
             AstKind::Optional => {
@@ -326,7 +327,7 @@ impl Types {
                     errors
                         .log(
                             ErrorKind::Type,
-                            "assigned expression has the incorrect type",
+                            "Assigned expression has the incorrect type",
                         )
                         .location_opt(*id.get(&ast.locations));
                 }
@@ -339,7 +340,7 @@ impl Types {
                 self.compute(ast, errors, body);
                 if *cond_tid.get(&self.types) != Type::Bool {
                     errors
-                        .log(ErrorKind::Type, "if condition must be of type Bool")
+                        .log(ErrorKind::Type, "If condition must be of type Bool")
                         .location_opt(*id.get(&ast.locations));
                 }
                 self.assign_new(id, Type::None)
@@ -349,23 +350,23 @@ impl Types {
                 let body = id.get(&ast.children)[1];
                 let else_body = id.get(&ast.children)[2];
                 let cond_tid = self.compute(ast, errors, cond);
-                self.compute(ast, errors, body);
-                self.compute(ast, errors, else_body);
+                let body_tid = self.compute(ast, errors, body);
+                let else_body_tid = self.compute(ast, errors, else_body);
                 if *cond_tid.get(&self.types) != Type::Bool {
                     errors
-                        .log(ErrorKind::Type, "if condition must be of type Bool")
+                        .log(ErrorKind::Type, "If condition must be of type Bool")
                         .location_opt(*id.get(&ast.locations));
                 }
-                let tid = self.union(body, else_body);
+                let tid = self.union(body_tid, else_body_tid);
                 self.assign(id, tid)
             }
             AstKind::Infix(kind) => match kind {
                 InfixKind::Add | InfixKind::Sub | InfixKind::Mul | InfixKind::Div => {
                     let lhs = id.get(&ast.children)[0];
                     let rhs = id.get(&ast.children)[1];
-                    self.compute(ast, errors, lhs);
-                    self.compute(ast, errors, rhs);
-                    let tid = self.intersect(lhs, rhs);
+                    let lhs_tid = self.compute(ast, errors, lhs);
+                    let rhs_tid = self.compute(ast, errors, rhs);
+                    let tid = self.union(lhs_tid, rhs_tid);
                     self.assign(id, tid)
                 }
                 InfixKind::Gt
@@ -378,17 +379,12 @@ impl Types {
                     let rhs = id.get(&ast.children)[1];
                     let lhs_tid = self.compute(ast, errors, lhs);
                     let rhs_tid = self.compute(ast, errors, rhs);
-                    if !self.equal(lhs_tid, rhs_tid) {
-                        errors
-                            .log(ErrorKind::Type, "operator types must be equal")
-                            .location_opt(*id.get(&ast.locations));
-                    }
                     self.assign_new(id, Type::Bool)
                 }
             },
             AstKind::Error => {
                 errors
-                    .log(ErrorKind::Type, "prase error when assigning type")
+                    .log(ErrorKind::Type, "Prase error when assigning type")
                     .location_opt(*id.get(&ast.locations));
                 self.assign_new(id, Type::Unknown)
             }
@@ -404,21 +400,43 @@ impl Types {
         seen.insert(tid);
 
         let ty = tid.get(&self.types);
-        let ty = format!("{ty:?}");
-        print!("{}", ty.blue().bold());
-
-        let children = tid.get(&self.children);
-        if !children.is_empty() {
-            print!(" {}", "(".blue());
-            let mut first = true;
-            for child in children {
-                if !first {
-                    print!("{} ", ",".blue());
+        match ty {
+            Type::Never => print!("{}", "|".blue().bold()),
+            Type::Any => print!("{}", "&".blue().bold()),
+            Type::None => print!("{}", "_".blue().bold()),
+            Type::String => print!("{}", "String".blue().bold()),
+            Type::Char => print!("{}", "Char".blue().bold()),
+            Type::I32 => print!("{}", "I32".blue().bold()),
+            Type::ConstI32(i) => print!("{}", i.to_string().blue().bold()),
+            Type::F32 => print!("{}", "F32".blue().bold()),
+            Type::Bool => print!("{}", "Bool".blue().bold()),
+            Type::Struct | Type::Tuple => {
+                print!("{}", "(".blue().bold());
+                let mut first = true;
+                for child in tid.get(&self.children) {
+                    if !first {
+                        print!("{} ", ",".blue().bold());
+                    }
+                    first = false;
+                    self.pretty_print_type(*child, seen);
                 }
-                self.pretty_print_type(*child, seen);
-                first = false;
+                print!("{}", ")".blue().bold());
             }
-            print!("{}", ")".blue());
+            Type::Func => {
+                self.pretty_print_type(tid.get(&self.children)[0], seen);
+                print!(" ");
+                self.pretty_print_type(tid.get(&self.children)[1], seen);
+            }
+            Type::Vector => {
+                print!("{}", "[]".to_string().blue().bold());
+                self.pretty_print_type(tid.get(&self.children)[0], seen);
+            }
+            Type::Array(n) => {
+                print!("{}", format!("[{n}]").blue().bold());
+                self.pretty_print_type(tid.get(&self.children)[0], seen);
+            }
+            Type::Optional => print!("{}", "Optional".blue().bold()),
+            Type::Unknown => print!("{}", "Unknown".blue().bold()),
         }
     }
 
