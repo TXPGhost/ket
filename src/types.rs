@@ -10,9 +10,9 @@ use crate::{
 
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum Type {
-    // Specialized Types
+    // Logic Types
     Never,
-    Any,
+    Universal,
 
     // Atomic types
     None,
@@ -33,9 +33,11 @@ pub enum Type {
     Array(usize),
     Optional,
 
-    // Unknown type
+    // Internal Types
     #[default]
     Unknown,
+    Recursive,
+    Error,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -86,7 +88,7 @@ impl Types {
     fn subtype(&self, lhs: TypeId, rhs: TypeId) -> bool {
         match (lhs.get(&self.types), rhs.get(&self.types)) {
             (Type::Never, _) => true,
-            (_, Type::Any) => true,
+            (_, Type::Universal) => true,
             (Type::None, Type::None) => true,
             (Type::String, Type::String) => true,
             (Type::I32, Type::I32) => true,
@@ -164,7 +166,7 @@ impl Types {
                 tid.get_mut(&mut self.children).push(child);
                 if x == y { Type::Array(x) } else { Type::Vector }
             }
-            _ => Type::Unknown,
+            _ => Type::Error,
         };
         *tid.get_mut(&mut self.types) = ty;
         tid
@@ -182,7 +184,7 @@ impl Types {
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
                 let Some(rid) = id.get(&ast.resolved_idents) else {
-                    return self.assign_new(id, Type::Unknown);
+                    return self.assign_new(id, Type::Error);
                 };
                 let tid = self.compute(ast, errors, *rid);
                 self.assign(id, tid)
@@ -205,15 +207,15 @@ impl Types {
                 let func_ty = self.compute(ast, errors, func);
                 let args_ty = self.compute(ast, errors, args);
 
-                if *func_ty.get(&self.types) == Type::Any {
-                    return self.assign_new(id, Type::Any);
+                if *func_ty.get(&self.types) == Type::Recursive {
+                    return self.assign_new(id, Type::Recursive);
                 }
 
                 if *func_ty.get(&self.types) != Type::Func {
                     errors
                         .log(ErrorKind::Type, "Cannot call non-function type")
                         .location_opt(*id.get(&ast.locations));
-                    return self.assign_new(id, Type::Unknown);
+                    return self.assign_new(id, Type::Error);
                 }
 
                 let func_args_ty = func_ty.get(&self.children)[0];
@@ -223,15 +225,15 @@ impl Types {
                     errors
                         .log(ErrorKind::Type, "Argument type mismatch")
                         .location_opt(*args.get(&ast.locations));
-                    self.assign_new(id, Type::Unknown)
+                    self.assign_new(id, Type::Error)
                 } else {
                     self.assign(id, func_body_ty)
                 }
             }
             AstKind::Method => todo!(),
-            AstKind::Group => self.assign_new(id, Type::Unknown),
+            AstKind::Group => self.assign_new(id, Type::Error),
             AstKind::Func => {
-                let tid = self.assign_new(id, Type::Any);
+                let tid = self.assign_new(id, Type::Recursive);
 
                 let args_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
                 tid.get_mut(&mut self.children).push(args_tid);
@@ -282,7 +284,7 @@ impl Types {
                         errors
                             .log(ErrorKind::Type, "Array type mismatch")
                             .location_opt(*id.get(&ast.locations));
-                        return self.assign_new(id, Type::Unknown);
+                        return self.assign_new(id, Type::Error);
                     }
                     old_child_tid = Some(child_tid);
                 }
@@ -366,8 +368,28 @@ impl Types {
                     let rhs = id.get(&ast.children)[1];
                     let lhs_tid = self.compute(ast, errors, lhs);
                     let rhs_tid = self.compute(ast, errors, rhs);
-                    let tid = self.union(lhs_tid, rhs_tid);
-                    self.assign(id, tid)
+                    let tid = match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
+                        (Type::Recursive, Type::I32 | Type::ConstI32(_)) => Type::I32,
+                        (Type::I32 | Type::ConstI32(_), Type::Recursive) => Type::I32,
+                        (Type::Recursive, Type::F32) => Type::F32,
+                        (Type::F32, Type::Recursive) => Type::F32,
+                        (Type::ConstI32(x), Type::ConstI32(y)) => match kind {
+                            InfixKind::Add => Type::ConstI32(x + y),
+                            InfixKind::Sub => Type::ConstI32(x - y),
+                            InfixKind::Mul => Type::ConstI32(x * y),
+                            InfixKind::Div => Type::ConstI32(x / y),
+                            _ => unreachable!(),
+                        },
+                        (Type::I32 | Type::ConstI32(_), Type::I32 | Type::ConstI32(_)) => Type::I32,
+                        (Type::F32, Type::F32) => Type::F32,
+                        _ => {
+                            errors
+                                .log(ErrorKind::Type, "Illegal operand")
+                                .location_opt(*id.get(&ast.locations));
+                            Type::Error
+                        }
+                    };
+                    self.assign_new(id, tid)
                 }
                 InfixKind::Gt
                 | InfixKind::Lt
@@ -386,7 +408,7 @@ impl Types {
                 errors
                     .log(ErrorKind::Type, "Prase error when assigning type")
                     .location_opt(*id.get(&ast.locations));
-                self.assign_new(id, Type::Unknown)
+                self.assign_new(id, Type::Error)
             }
             AstKind::PrimitiveType(ty) => self.assign_new(id, *ty),
         }
@@ -402,7 +424,7 @@ impl Types {
         let ty = tid.get(&self.types);
         match ty {
             Type::Never => print!("{}", "|".blue().bold()),
-            Type::Any => print!("{}", "&".blue().bold()),
+            Type::Universal => print!("{}", "&".blue().bold()),
             Type::None => print!("{}", "_".blue().bold()),
             Type::String => print!("{}", "String".blue().bold()),
             Type::Char => print!("{}", "Char".blue().bold()),
@@ -437,6 +459,8 @@ impl Types {
             }
             Type::Optional => print!("{}", "Optional".blue().bold()),
             Type::Unknown => print!("{}", "Unknown".blue().bold()),
+            Type::Error => print!("{}", "<error>".blue().bold()),
+            Type::Recursive => print!("{}", "<recursive>".blue().bold()),
         }
     }
 
