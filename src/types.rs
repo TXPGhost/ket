@@ -35,9 +35,9 @@ pub enum Type {
 
     // Internal Types
     #[default]
-    Unknown,
-    Recursive,
-    Error,
+    Unknown, // a type which is unknown
+    Weak,  // a type which can be coerced into any other type
+    Error, // a type which is impossible, resulting from a type error
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -184,7 +184,7 @@ impl Types {
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
                 let Some(rid) = id.get(&ast.resolved_idents) else {
-                    return self.assign_new(id, Type::Error);
+                    return self.assign_new(id, Type::Unknown);
                 };
                 let tid = self.compute(ast, errors, *rid);
                 self.assign(id, tid)
@@ -207,8 +207,8 @@ impl Types {
                 let func_ty = self.compute(ast, errors, func);
                 let args_ty = self.compute(ast, errors, args);
 
-                if *func_ty.get(&self.types) == Type::Recursive {
-                    return self.assign_new(id, Type::Recursive);
+                if *func_ty.get(&self.types) == Type::Weak {
+                    return self.assign_new(id, Type::Weak);
                 }
 
                 if *func_ty.get(&self.types) != Type::Func {
@@ -233,7 +233,7 @@ impl Types {
             AstKind::Method => todo!(),
             AstKind::Group => self.assign_new(id, Type::Error),
             AstKind::Func => {
-                let tid = self.assign_new(id, Type::Recursive);
+                let tid = self.assign_new(id, Type::Weak);
 
                 let args_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
                 tid.get_mut(&mut self.children).push(args_tid);
@@ -369,10 +369,26 @@ impl Types {
                     let lhs_tid = self.compute(ast, errors, lhs);
                     let rhs_tid = self.compute(ast, errors, rhs);
                     let tid = match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
-                        (Type::Recursive, Type::I32 | Type::ConstI32(_)) => Type::I32,
-                        (Type::I32 | Type::ConstI32(_), Type::Recursive) => Type::I32,
-                        (Type::Recursive, Type::F32) => Type::F32,
-                        (Type::F32, Type::Recursive) => Type::F32,
+                        (Type::Weak, Type::Weak) => {
+                            rhs.put(&mut self.assignments, Some(lhs_tid));
+                            Type::Weak
+                        }
+                        (Type::Weak, Type::I32 | Type::ConstI32(_)) => {
+                            lhs_tid.put(&mut self.types, Type::I32);
+                            Type::I32
+                        }
+                        (Type::I32 | Type::ConstI32(_), Type::Weak) => {
+                            rhs_tid.put(&mut self.types, Type::I32);
+                            Type::I32
+                        }
+                        (Type::Weak, Type::F32) => {
+                            lhs_tid.put(&mut self.types, Type::F32);
+                            Type::F32
+                        }
+                        (Type::F32, Type::Weak) => {
+                            rhs_tid.put(&mut self.types, Type::F32);
+                            Type::F32
+                        }
                         (Type::ConstI32(x), Type::ConstI32(y)) => match kind {
                             InfixKind::Add => Type::ConstI32(x + y),
                             InfixKind::Sub => Type::ConstI32(x - y),
@@ -457,10 +473,13 @@ impl Types {
                 print!("{}", format!("[{n}]").blue().bold());
                 self.pretty_print_type(tid.get(&self.children)[0], seen);
             }
-            Type::Optional => print!("{}", "Optional".blue().bold()),
+            Type::Optional => {
+                self.pretty_print_type(tid.get(&self.children)[0], seen);
+                print!("{}", "?".to_string().blue().bold());
+            }
             Type::Unknown => print!("{}", "Unknown".blue().bold()),
-            Type::Error => print!("{}", "<error>".blue().bold()),
-            Type::Recursive => print!("{}", "<recursive>".blue().bold()),
+            Type::Error => print!("{}", "Error".blue().bold()),
+            Type::Weak => print!("{}", format!("Weak{}", tid.index()).blue().bold()),
         }
     }
 
