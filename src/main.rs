@@ -97,13 +97,22 @@ fn live(filename: &str) {
 }
 
 fn main() {
-    // let mut args = std::env::args();
-    // if args.len() <= 1 {
-    //     println!("error: expected at least one argument");
-    //     return;
-    // }
-    // live(&args.nth(1).unwrap());
-
-    let runtime = Runtime::new().unwrap();
-    runtime.block_on(lsp::lsp_main());
+    let mut args = std::env::args();
+    if args.len() <= 1 {
+        println!("error: expected at least one argument");
+        return;
+    }
+    let cmd = args.nth(1).unwrap();
+    match cmd.as_str() {
+        "live" => {
+            live(&args.next().expect("missing file name"));
+        }
+        "lsp" => {
+            let runtime = Runtime::new().unwrap();
+            runtime.block_on(lsp::lsp_main());
+        }
+        _ => {
+            println!("unrecognized command. valid commands are `live` and `lsp`");
+        }
+    }
 }

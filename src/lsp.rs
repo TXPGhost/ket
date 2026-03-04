@@ -7,14 +7,10 @@ use tower_lsp_server::ls_types::*;
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
 use crate::ast::AstId;
+use crate::file::read_string;
 use crate::{
-    ast::Ast,
-    error::Errors,
-    file::{Files, read_file},
-    lexer::lex_file,
-    parser::Parser,
-    prelude::StandardPrelude,
-    types::Types,
+    ast::Ast, error::Errors, file::Files, lexer::lex_file, parser::Parser,
+    prelude::StandardPrelude, types::Types,
 };
 
 #[derive(Debug)]
@@ -40,7 +36,7 @@ impl Backend {
                     },
                     end: Position {
                         line: location.line_end - 1,
-                        character: location.char_end - 1,
+                        character: location.char_end,
                     },
                 };
             }
@@ -55,7 +51,7 @@ impl Backend {
             .await;
     }
 
-    async fn recompile(&self, uri: Uri) {
+    async fn refresh(&self, uri: Uri, contents: String) {
         if self
             .recompile_debounce
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -63,11 +59,47 @@ impl Backend {
         {
             return;
         }
-        let filename = uri.to_file_path().unwrap().to_str().unwrap().to_owned();
-        compile_file(filename, self.state.clone()).await;
+        compile_uri(
+            contents,
+            uri.to_file_path().unwrap().to_str().unwrap(),
+            self.state.clone(),
+        )
+        .await;
         self.compilation_counter.fetch_add(1, Ordering::Relaxed);
         self.recompile_debounce.store(false, Ordering::SeqCst);
         self.publish_diagnostics(&uri).await;
+        self.client.semantic_tokens_refresh().await.ok();
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        _: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let ast = self.state.ast.lock().await;
+
+        let mut line = 0;
+        let mut start = 0;
+        let mut tokens = Vec::new();
+        for id in ast.ids.iter() {
+            if let Some(location) = id.get(&ast.locations) {
+                let new_line = location.line_start - 1;
+                let new_start = location.char_start - 1;
+                tokens.push(SemanticToken {
+                    delta_line: new_line - line,
+                    delta_start: new_start - start,
+                    length: location.char_end - location.char_start,
+                    token_type: 2,
+                    token_modifiers_bitset: 0,
+                });
+                line = new_line;
+                start = new_start;
+            }
+        }
+
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data: tokens,
+        })))
     }
 }
 
@@ -90,6 +122,19 @@ impl LanguageServer for Backend {
                         },
                     },
                 )),
+                semantic_tokens_provider: Some(
+                    SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        SemanticTokensOptions {
+                            legend: SemanticTokensLegend {
+                                token_types: vec!["type".into(), "class".into(), "enum".into()],
+                                token_modifiers: vec![],
+                            },
+                            range: Some(false),
+                            full: Some(SemanticTokensFullOptions::Bool(true)),
+                            ..Default::default()
+                        },
+                    ),
+                ),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -165,11 +210,16 @@ impl LanguageServer for Backend {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.recompile(params.text_document.uri).await;
+        self.refresh(params.text_document.uri, params.text_document.text)
+            .await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
-        self.recompile(params.text_document.uri).await;
+        self.refresh(
+            params.text_document.uri,
+            params.content_changes[0].text.clone(),
+        )
+        .await;
     }
 }
 
@@ -181,13 +231,13 @@ struct CompilerState {
     types: Mutex<Types>,
 }
 
-async fn compile_file(filename: String, state: Arc<CompilerState>) {
+async fn compile_uri(contents: String, path: &str, state: Arc<CompilerState>) {
     let mut errors = Errors::default();
     let mut files = Files::default();
     let mut ast = Ast::default();
     let mut types = Types::default();
 
-    let file = read_file(filename.as_ref(), &mut files, &mut errors);
+    let file = read_string(contents, path, &mut files);
     if let Some(file) = file {
         let tokens = lex_file(file, &files, &mut errors);
         let root = Parser::new(&tokens, &mut ast, &mut errors).parse();

@@ -30,3 +30,12 @@ pub fn read_file(path: &str, files: &mut Files, errors: &mut Errors) -> Option<F
         }
     }
 }
+
+pub fn read_string(contents: String, path: &str, files: &mut Files) -> Option<FileId> {
+    let id = files
+        .ids
+        .alloc()
+        .put(&mut files.sources, contents)
+        .put(&mut files.paths, path.to_owned());
+    Some(id)
+}
