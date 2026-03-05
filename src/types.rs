@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use colored::Colorize;
 
@@ -6,15 +6,12 @@ use crate::{
     arena::{Arena, Id, World},
     ast::{Ast, AstId, AstKind, InfixKind, Literal},
     error::{ErrorKind, Errors},
+    file::Files,
 };
 
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug, Hash)]
 pub enum Type {
-    // Logic Types
-    Never,
-    Universal,
-
-    // Atomic types
+    // Primitive types
     None,
     String,
     Char,
@@ -57,6 +54,7 @@ pub struct Types {
     pub ids: World<Types>,
     pub types: Arena<Types, Type>,
     pub children: Arena<Types, Vec<TypeId>>,
+    pub field_ids: Arena<Types, Vec<AstId>>,
     pub assignments: Arena<Ast, Option<TypeId>>,
 }
 pub type TypeId = Id<Types>;
@@ -87,8 +85,6 @@ impl Types {
 
     fn subtype(&self, lhs: TypeId, rhs: TypeId) -> bool {
         match (lhs.get(&self.types), rhs.get(&self.types)) {
-            (Type::Never, _) => true,
-            (_, Type::Universal) => true,
             (Type::None, Type::None) => true,
             (Type::String, Type::String) => true,
             (Type::I32, Type::I32) => true,
@@ -222,13 +218,13 @@ impl Types {
                 let func_body_ty = func_ty.get(&self.children)[1];
 
                 if !self.subtype(args_ty, func_args_ty) {
-                    let found = args_ty.get(&self.types);
-                    let expected = func_args_ty.get(&self.types);
                     errors
                         .log(
                             ErrorKind::Type,
                             format!(
-                                "Argument type mismatch: expected {expected:?} but found {found:?}"
+                                "Argument type mismatch: expected {} but found {}",
+                                self.string_of_type(func_args_ty, ast),
+                                self.string_of_type(args_ty, ast),
                             ),
                         )
                         .location_opt(*args.get(&ast.locations));
@@ -263,18 +259,92 @@ impl Types {
                     self.assign_new(id, Type::None)
                 }
             }
-            AstKind::Proj => todo!(),
+            AstKind::Proj => {
+                let base = id.get(&ast.children)[0];
+                let field = id.get(&ast.children)[1];
+
+                let base_ty = self.compute(ast, errors, base);
+
+                match base_ty.get(&self.types) {
+                    Type::Tuple => {
+                        if !matches!(field.get(&ast.kinds), AstKind::Integer) {
+                            errors
+                                .log(ErrorKind::Type, "Tuple field name must be an integer")
+                                .location_opt(*id.get(&ast.locations));
+                            return self.assign_new(id, Type::Error);
+                        }
+                        let Some(Literal::Integer(index)) = field.get(&ast.literals) else {
+                            unreachable!();
+                        };
+                        let index = *index as usize;
+                        let num_children = base_ty.get(&self.children).len();
+                        if num_children <= index {
+                            errors
+                                .log(
+                                    ErrorKind::Type,
+                                    format!("Tuple ({}) is too short", num_children),
+                                )
+                                .location_opt(*id.get(&ast.locations));
+                            return self.assign_new(id, Type::Error);
+                        }
+                        let tid = base_ty.get(&self.children)[index];
+                        self.assign(id, tid)
+                    }
+                    Type::Struct => {
+                        if !matches!(field.get(&ast.kinds), AstKind::LIdent | AstKind::UIdent) {
+                            errors
+                                .log(ErrorKind::Type, "Struct field name must be an identifier")
+                                .location_opt(*id.get(&ast.locations));
+                            return self.assign_new(id, Type::Error);
+                        }
+                        let ident = field.get(&ast.idents);
+                        for (field_tid, field_id) in base_ty
+                            .get(&self.children)
+                            .iter()
+                            .zip(base_ty.get(&self.field_ids))
+                        {
+                            if field_id.get(&ast.idents) == ident {
+                                return self.assign(id, *field_tid);
+                            }
+                        }
+                        errors
+                            .log(
+                                ErrorKind::Type,
+                                format!(
+                                    "No such field \"{}\" on struct \"{}\"",
+                                    ident,
+                                    base.get(&ast.idents)
+                                ),
+                            )
+                            .location_opt(*id.get(&ast.locations));
+                        self.assign_new(id, Type::Error)
+                    }
+                    _ => {
+                        errors
+                            .log(
+                                ErrorKind::Type,
+                                "Projection operator not supported for the given type",
+                            )
+                            .location_opt(*id.get(&ast.locations));
+                        self.assign_new(id, Type::Error)
+                    }
+                }
+            }
             AstKind::Index => todo!(),
-            AstKind::Struct | AstKind::Tuple => {
-                let ty = match kind {
-                    AstKind::Struct => Type::Struct,
-                    AstKind::Tuple => Type::Tuple,
-                    _ => unreachable!(),
-                };
-                let tid = self.assign_new(id, ty);
+            AstKind::Tuple => {
+                let tid = self.assign_new(id, Type::Tuple);
                 for child in id.get(&ast.children) {
                     let child_tid = self.compute(ast, errors, *child);
                     tid.get_mut(&mut self.children).push(child_tid);
+                }
+                tid
+            }
+            AstKind::Struct => {
+                let tid = self.assign_new(id, Type::Struct);
+                for child in id.get(&ast.children) {
+                    let child_tid = self.compute(ast, errors, *child);
+                    tid.get_mut(&mut self.children).push(child_tid);
+                    tid.get_mut(&mut self.field_ids).push(*child);
                 }
                 tid
             }
@@ -427,17 +497,77 @@ impl Types {
                     self.assign_new(id, Type::Bool)
                 }
             },
-            AstKind::Error => {
-                errors
-                    .log(ErrorKind::Type, "Prase error when assigning type")
-                    .location_opt(*id.get(&ast.locations));
-                self.assign_new(id, Type::Error)
-            }
+            AstKind::Error => self.assign_new(id, Type::Unknown),
             AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
             AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
             AstKind::PrimitiveString => self.assign_new(id, Type::String),
             AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
         }
+    }
+
+    fn write_type_into(&self, tid: TypeId, ast: &Ast, buf: &mut String) {
+        let ty = tid.get(&self.types);
+        match ty {
+            Type::None => *buf += "_",
+            Type::String => *buf += "__String",
+            Type::Char => *buf += "__Char",
+            Type::I32 => *buf += "__I32",
+            Type::ConstI32(i) => *buf += &i.to_string(),
+            Type::F32 => *buf += "__F32",
+            Type::Bool => *buf += "__Bool",
+            Type::Tuple => {
+                *buf += "(";
+                let mut first = true;
+                for child in tid.get(&self.children) {
+                    if !first {
+                        *buf += ", ";
+                    }
+                    first = false;
+                    self.write_type_into(*child, ast, buf);
+                }
+                *buf += ")";
+            }
+            Type::Struct => {
+                *buf += "(";
+                let mut first = true;
+                for (child, id) in tid.get(&self.children).iter().zip(tid.get(&self.field_ids)) {
+                    if !first {
+                        *buf += ", ";
+                    }
+                    first = false;
+                    *buf += id.get(&ast.idents).as_str();
+                    *buf += " ";
+                    self.write_type_into(*child, ast, buf);
+                }
+                *buf += ")";
+            }
+            Type::Func => {
+                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+                *buf += " ";
+                self.write_type_into(tid.get(&self.children)[1], ast, buf);
+            }
+            Type::Vector => {
+                *buf += "[]";
+                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+            }
+            Type::Array(n) => {
+                *buf += &format!("[{n}]");
+                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+            }
+            Type::Optional => {
+                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+                *buf += "?";
+            }
+            Type::Unknown => *buf += "__Unknown",
+            Type::Error => *buf += "__Error",
+            Type::Weak => *buf += &format!("__Weak{}", tid.index()),
+        }
+    }
+
+    pub fn string_of_type(&self, tid: TypeId, ast: &Ast) -> String {
+        let mut result = String::new();
+        self.write_type_into(tid, ast, &mut result);
+        result
     }
 
     fn pretty_print_type(&self, tid: TypeId, seen: &mut HashSet<TypeId>) {
@@ -449,8 +579,6 @@ impl Types {
 
         let ty = tid.get(&self.types);
         match ty {
-            Type::Never => print!("{}", "|".blue().bold()),
-            Type::Universal => print!("{}", "&".blue().bold()),
             Type::None => print!("{}", "_".blue().bold()),
             Type::String => print!("{}", "String".blue().bold()),
             Type::Char => print!("{}", "Char".blue().bold()),

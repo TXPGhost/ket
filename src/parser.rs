@@ -223,6 +223,23 @@ impl<'a> Parser<'a> {
         id
     }
 
+    fn parse_proj_name(&mut self) -> AstId {
+        let id = match self.cur() {
+            Underscore => self.node(AstKind::Void),
+            LIdent => self.node(AstKind::LIdent),
+            UIdent => self.node(AstKind::UIdent),
+            Integer => self.node(AstKind::Integer),
+            _ => {
+                self.error("Expected identifier");
+                self.node(AstKind::Error)
+            }
+        };
+        let location = self.cur_loc();
+        id.put(&mut self.ast.locations, location);
+        self.eat();
+        id
+    }
+
     fn parse_arg(&mut self) -> AstId {
         if self.matches_ahead(&[TokenKind::Equals], 1) {
             let id = self.node(AstKind::Arg);
@@ -291,7 +308,7 @@ impl<'a> Parser<'a> {
             if self.matches(&[Dot]) {
                 let id = self.node(AstKind::Proj);
                 self.eat();
-                let ident = self.parse_ident();
+                let ident = self.parse_proj_name();
                 self.push_child(id, base);
                 self.push_child(id, ident);
                 base = id;

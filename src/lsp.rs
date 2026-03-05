@@ -103,6 +103,27 @@ impl Backend {
     }
 }
 
+#[allow(clippy::int_plus_one)]
+fn find_ident(position: Position, ast: &Ast) -> Option<AstId> {
+    let mut found_id: Option<AstId> = None;
+    let mut old_size = u32::MAX;
+    for id in ast.ids.iter() {
+        if let Some(location) = id.get(&ast.locations)
+            && position.line + 1 >= location.line_start
+            && position.line + 1 <= location.line_end
+            && position.character + 1 >= location.char_start
+            && position.character + 1 <= location.char_end
+        {
+            let size = location.end - location.start;
+            if size < old_size {
+                found_id = Some(id);
+                old_size = size;
+            }
+        }
+    }
+    found_id
+}
+
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
@@ -135,6 +156,7 @@ impl LanguageServer for Backend {
                         },
                     ),
                 ),
+                definition_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -161,45 +183,19 @@ impl LanguageServer for Backend {
         ])))
     }
 
-    #[allow(clippy::int_plus_one)]
     async fn hover(&self, hover_params: HoverParams) -> Result<Option<Hover>> {
         let position = hover_params.text_document_position_params.position;
 
         let ast = self.state.ast.lock().await;
         let types = self.state.types.lock().await;
 
-        let mut found_id: Option<AstId> = None;
-        let mut old_size = u32::MAX;
-        for id in ast.ids.iter() {
-            if let Some(location) = id.get(&ast.locations)
-                && position.line + 1 >= location.line_start
-                && position.line + 1 <= location.line_end
-                && position.character + 1 >= location.char_start
-                && position.character + 1 <= location.char_end
-            {
-                let size = location.end - location.start;
-                if size < old_size {
-                    found_id = Some(id);
-                    old_size = size;
-                }
-            }
-        }
-        let ty = found_id
-            .map(|id| id.get(&types.assignments).unwrap())
-            .map(|tid| tid.get(&types.types));
-        let ident = found_id
-            .map(|id| id.get(&ast.qualified_idents))
-            .map(|ident| {
-                let idx = ident
-                    .rfind('.')
-                    .map(|i| i + 1)
-                    .unwrap_or_default()
-                    .min(ident.len());
-                &ident[idx..]
-            });
+        let hovered_id = find_ident(position, &ast);
+        let tid = hovered_id.map(|id| id.get(&types.assignments).unwrap());
 
-        let msg = match (ty, ident) {
-            (Some(ty), Some(ident)) => format!("{ident} {ty:?}"),
+        let ident = hovered_id.map(|id| id.get(&ast.qualified_idents));
+
+        let msg = match (tid, ident) {
+            (Some(tid), Some(ident)) => format!("`{ident} {}`", types.string_of_type(tid, &ast)),
             _ => match self.recompile_debounce.load(Ordering::SeqCst) {
                 true => "recompiling...".to_owned(),
                 false => format!(
@@ -227,6 +223,37 @@ impl LanguageServer for Backend {
         )
         .await;
     }
+
+    async fn goto_definition(
+        &self,
+        params: GotoDefinitionParams,
+    ) -> Result<Option<GotoDefinitionResponse>> {
+        let ast = self.state.ast.lock().await;
+
+        let Some(id) = find_ident(params.text_document_position_params.position, &ast) else {
+            return Ok(None);
+        };
+
+        let Some(resolved) = id.get(&ast.resolved_idents) else {
+            return Ok(None);
+        };
+        let Some(loc) = resolved.get(&ast.locations) else {
+            return Ok(None);
+        };
+        Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri: params.text_document_position_params.text_document.uri,
+            range: Range {
+                start: Position {
+                    line: loc.line_start - 1,
+                    character: loc.char_start - 1,
+                },
+                end: Position {
+                    line: loc.line_end - 1,
+                    character: loc.line_end - 1,
+                },
+            },
+        })))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -249,7 +276,7 @@ async fn compile_uri(contents: String, path: &str, state: Arc<CompilerState>) {
         let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
         ast.simplify(root);
         ast.parse_literals(&files, &mut errors);
-        ast.qualify_and_resolve(&files, root, StandardPrelude);
+        ast.resolve_idents(&files, root, StandardPrelude);
         types.compute_types(&ast, &mut errors);
     }
 
