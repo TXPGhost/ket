@@ -70,37 +70,6 @@ impl Backend {
         self.publish_diagnostics(&uri).await;
         self.client.semantic_tokens_refresh().await.ok();
     }
-
-    async fn semantic_tokens_full(
-        &self,
-        _: SemanticTokensParams,
-    ) -> Result<Option<SemanticTokensResult>> {
-        let ast = self.state.ast.lock().await;
-
-        let mut line = 0;
-        let mut start = 0;
-        let mut tokens = Vec::new();
-        for id in ast.ids.iter() {
-            if let Some(location) = id.get(&ast.locations) {
-                let new_line = location.line_start - 1;
-                let new_start = location.char_start - 1;
-                tokens.push(SemanticToken {
-                    delta_line: new_line - line,
-                    delta_start: new_start - start,
-                    length: location.char_end - location.char_start,
-                    token_type: 2,
-                    token_modifiers_bitset: 0,
-                });
-                line = new_line;
-                start = new_start;
-            }
-        }
-
-        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
-            result_id: None,
-            data: tokens,
-        })))
-    }
 }
 
 #[allow(clippy::int_plus_one)]

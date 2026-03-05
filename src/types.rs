@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use colored::Colorize;
 
@@ -6,7 +6,6 @@ use crate::{
     arena::{Arena, Id, World},
     ast::{Ast, AstId, AstKind, InfixKind, Literal},
     error::{ErrorKind, Errors},
-    file::Files,
 };
 
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -490,10 +489,11 @@ impl Types {
                 | InfixKind::Le
                 | InfixKind::Eq
                 | InfixKind::Ne => {
-                    let lhs = id.get(&ast.children)[0];
-                    let rhs = id.get(&ast.children)[1];
-                    let lhs_tid = self.compute(ast, errors, lhs);
-                    let rhs_tid = self.compute(ast, errors, rhs);
+                    // TODO: actually check
+                    // let lhs = id.get(&ast.children)[0];
+                    // let rhs = id.get(&ast.children)[1];
+                    // let lhs_tid = self.compute(ast, errors, lhs);
+                    // let rhs_tid = self.compute(ast, errors, rhs);
                     self.assign_new(id, Type::Bool)
                 }
             },

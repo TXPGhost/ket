@@ -97,9 +97,10 @@ impl InfixKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Literal {
     Integer(i64),
+    Float(f64),
     String(String),
     Char(u8),
 }
@@ -370,6 +371,14 @@ impl Ast {
                     AstKind::Integer => match slice.parse::<i64>() {
                         Ok(v) => {
                             id.put(&mut self.literals, Some(Literal::Integer(v)));
+                        }
+                        Err(e) => {
+                            errors.log(ErrorKind::Parse, format!("failed to parse integer: {e}"));
+                        }
+                    },
+                    AstKind::Float => match slice.parse::<f64>() {
+                        Ok(v) => {
+                            id.put(&mut self.literals, Some(Literal::Float(v)));
                         }
                         Err(e) => {
                             errors.log(ErrorKind::Parse, format!("failed to parse integer: {e}"));
