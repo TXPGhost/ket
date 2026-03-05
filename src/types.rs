@@ -222,8 +222,15 @@ impl Types {
                 let func_body_ty = func_ty.get(&self.children)[1];
 
                 if !self.subtype(args_ty, func_args_ty) {
+                    let found = args_ty.get(&self.types);
+                    let expected = func_args_ty.get(&self.types);
                     errors
-                        .log(ErrorKind::Type, "Argument type mismatch")
+                        .log(
+                            ErrorKind::Type,
+                            format!(
+                                "Argument type mismatch: expected {expected:?} but found {found:?}"
+                            ),
+                        )
                         .location_opt(*args.get(&ast.locations));
                     self.assign_new(id, Type::Error)
                 } else {
@@ -426,7 +433,10 @@ impl Types {
                     .location_opt(*id.get(&ast.locations));
                 self.assign_new(id, Type::Error)
             }
-            AstKind::PrimitiveType(ty) => self.assign_new(id, *ty),
+            AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
+            AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
+            AstKind::PrimitiveString => self.assign_new(id, Type::String),
+            AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
         }
     }
 

@@ -168,7 +168,8 @@ impl LanguageServer for Backend {
         let ast = self.state.ast.lock().await;
         let types = self.state.types.lock().await;
 
-        let mut found_id: Option<(AstId, u32)> = None;
+        let mut found_id: Option<AstId> = None;
+        let mut old_size = u32::MAX;
         for id in ast.ids.iter() {
             if let Some(location) = id.get(&ast.locations)
                 && position.line + 1 >= location.line_start
@@ -177,24 +178,29 @@ impl LanguageServer for Backend {
                 && position.character + 1 <= location.char_end
             {
                 let size = location.end - location.start;
-                match found_id {
-                    Some(found_id) if found_id.1 < size => {}
-                    _ => {
-                        found_id = Some((id, size));
-                    }
+                if size < old_size {
+                    found_id = Some(id);
+                    old_size = size;
                 }
-                break;
             }
         }
-        let tid = found_id
-            .map(|(id, _)| id.get(&types.assignments))
-            .copied()
-            .flatten();
-        let ty = tid.map(|tid| tid.get(&types.types));
+        let ty = found_id
+            .map(|id| id.get(&types.assignments).unwrap())
+            .map(|tid| tid.get(&types.types));
+        let ident = found_id
+            .map(|id| id.get(&ast.qualified_idents))
+            .map(|ident| {
+                let idx = ident
+                    .rfind('.')
+                    .map(|i| i + 1)
+                    .unwrap_or_default()
+                    .min(ident.len());
+                &ident[idx..]
+            });
 
-        let msg = match ty {
-            Some(ty) => format!("{ty:?}"),
-            None => match self.recompile_debounce.load(Ordering::SeqCst) {
+        let msg = match (ty, ident) {
+            (Some(ty), Some(ident)) => format!("{ident} {ty:?}"),
+            _ => match self.recompile_debounce.load(Ordering::SeqCst) {
                 true => "recompiling...".to_owned(),
                 false => format!(
                     "compiled {} times ({} errors)",

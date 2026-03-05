@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use crate::{
     arena::{Arena, Id, World},
     ast::{Ast, AstKind},
-    types::Type,
 };
 
 pub trait Prelude {
@@ -23,15 +22,15 @@ impl Prelude for StandardPrelude {
         kinds: &mut Arena<Ast, AstKind>,
         qualified_idents_map: &mut HashMap<String, Id<Ast>>,
     ) {
-        let mut add_primitive = |s: &str, t: Type| {
+        let mut add_primitive = |s: &str, k: AstKind| {
             let id = ids.alloc();
-            id.put(kinds, AstKind::PrimitiveType(t));
+            id.put(kinds, k);
             qualified_idents_map.insert(format!(".{s}"), id);
         };
 
-        add_primitive("I32", Type::I32);
-        add_primitive("F32", Type::F32);
-        add_primitive("String", Type::String);
-        add_primitive("Char", Type::Char);
+        add_primitive("I32", AstKind::PrimitiveI32);
+        add_primitive("F32", AstKind::PrimitiveF32);
+        add_primitive("String", AstKind::PrimitiveString);
+        add_primitive("Char", AstKind::PrimitiveChar);
     }
 }

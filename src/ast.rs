@@ -9,7 +9,6 @@ use crate::{
     file::Files,
     lexer::{Location, TokenKind},
     prelude::Prelude,
-    types::Type,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -43,7 +42,11 @@ pub enum AstKind {
     If,
     IfElse,
     Infix(InfixKind),
-    PrimitiveType(Type),
+
+    PrimitiveI32,
+    PrimitiveF32,
+    PrimitiveString,
+    PrimitiveChar,
 
     #[default]
     Error,
@@ -143,36 +146,20 @@ impl Ast {
         resolved_idents: &mut Arena<Ast, Option<AstId>>,
         unresolved: &mut Vec<AstId>,
     ) {
-        if matches!(id.get(kinds), AstKind::Field) {
-            let ident = id.get(children)[0];
-            let location = ident
-                .get(locations)
-                .expect("must have file source to compute qualified idents");
-            let slice =
-                &location.file.get(&files.sources)[location.start as usize..location.end as usize];
-            let path = format!("{path}.{slice}");
-            ident.put(qualified_idents, path.clone());
-            qualified_idents_map.insert(path.clone(), ident);
-            ident.put(resolved_idents, Some(id.get(children)[1]));
-            Self::qualify_helper(
-                id.get(children)[1],
-                &path,
-                files,
-                kinds,
-                children,
-                locations,
-                qualified_idents,
-                qualified_idents_map,
-                resolved_idents,
-                unresolved,
-            );
-        } else if matches!(id.get(kinds), AstKind::Block) {
-            let idx = id.index();
-            let path = format!("{path}.${idx}");
-            id.put(qualified_idents, path.clone());
-            for child in id.get(children) {
+        match id.get(kinds) {
+            AstKind::Field => {
+                let ident = id.get(children)[0];
+                let location = ident
+                    .get(locations)
+                    .expect("must have file source to compute qualified idents");
+                let slice = &location.file.get(&files.sources)
+                    [location.start as usize..location.end as usize];
+                let path = format!("{path}.{slice}");
+                ident.put(qualified_idents, path.clone());
+                qualified_idents_map.insert(path.clone(), ident);
+                ident.put(resolved_idents, Some(id.get(children)[1]));
                 Self::qualify_helper(
-                    *child,
+                    id.get(children)[1],
                     &path,
                     files,
                     kinds,
@@ -184,55 +171,28 @@ impl Ast {
                     unresolved,
                 );
             }
-        } else if matches!(id.get(kinds), AstKind::Arg) {
-            Self::qualify_helper(
-                id.get(children)[1],
-                path,
-                files,
-                kinds,
-                children,
-                locations,
-                qualified_idents,
-                qualified_idents_map,
-                resolved_idents,
-                unresolved,
-            );
-        } else if matches!(id.get(kinds), AstKind::Bind) {
-            let lhs = id.get(children)[0];
-            let location = lhs
-                .get(locations)
-                .expect("must have file source to compute qualified idents");
-            let slice =
-                &location.file.get(&files.sources)[location.start as usize..location.end as usize];
-            let path = format!("{path}.{slice}");
-            lhs.put(qualified_idents, path.clone());
-            qualified_idents_map.insert(path.clone(), lhs);
-            lhs.put(resolved_idents, Some(id.get(children)[1]));
-            Self::qualify_helper(
-                id.get(children)[1],
-                &path,
-                files,
-                kinds,
-                children,
-                locations,
-                qualified_idents,
-                qualified_idents_map,
-                resolved_idents,
-                unresolved,
-            );
-        } else if matches!(id.get(kinds), AstKind::LIdent | AstKind::UIdent) {
-            let location = id
-                .get(locations)
-                .expect("must have file source to compute qualified idents");
-            let slice =
-                &location.file.get(&files.sources)[location.start as usize..location.end as usize];
-            let path = format!("{path}.{slice}");
-            id.put(qualified_idents, path.clone());
-            unresolved.push(id);
-        } else {
-            for child in id.get(children) {
+            AstKind::Block => {
+                let idx = id.index();
+                let path = format!("{path}.__blk{idx}");
+                id.put(qualified_idents, path.clone());
+                for child in id.get(children) {
+                    Self::qualify_helper(
+                        *child,
+                        &path,
+                        files,
+                        kinds,
+                        children,
+                        locations,
+                        qualified_idents,
+                        qualified_idents_map,
+                        resolved_idents,
+                        unresolved,
+                    );
+                }
+            }
+            AstKind::Arg => {
                 Self::qualify_helper(
-                    *child,
+                    id.get(children)[1],
                     path,
                     files,
                     kinds,
@@ -243,6 +203,59 @@ impl Ast {
                     resolved_idents,
                     unresolved,
                 );
+            }
+            AstKind::Bind => {
+                let lhs = id.get(children)[0];
+                let location = lhs
+                    .get(locations)
+                    .expect("must have file source to compute qualified idents");
+                let slice = &location.file.get(&files.sources)
+                    [location.start as usize..location.end as usize];
+                let path = format!("{path}.{slice}");
+                lhs.put(qualified_idents, path.clone());
+                qualified_idents_map.insert(path.clone(), lhs);
+                lhs.put(resolved_idents, Some(id.get(children)[1]));
+                Self::qualify_helper(
+                    id.get(children)[1],
+                    &path,
+                    files,
+                    kinds,
+                    children,
+                    locations,
+                    qualified_idents,
+                    qualified_idents_map,
+                    resolved_idents,
+                    unresolved,
+                );
+            }
+            AstKind::LIdent | AstKind::UIdent => {
+                let location = id
+                    .get(locations)
+                    .expect("must have file source to compute qualified idents");
+                let slice = &location.file.get(&files.sources)
+                    [location.start as usize..location.end as usize];
+                let path = format!("{path}.{slice}");
+                id.put(qualified_idents, path.clone());
+                unresolved.push(id);
+            }
+            _ => {
+                let idx = id.index();
+                let path = format!("{path}.__tmp{idx}");
+                id.put(qualified_idents, path.clone());
+                for child in id.get(children) {
+                    Self::qualify_helper(
+                        *child,
+                        &path,
+                        files,
+                        kinds,
+                        children,
+                        locations,
+                        qualified_idents,
+                        qualified_idents_map,
+                        resolved_idents,
+                        unresolved,
+                    );
+                }
             }
         }
     }
