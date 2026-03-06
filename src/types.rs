@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use colored::Colorize;
 
 use crate::{
@@ -48,12 +46,18 @@ pub enum TypeError {
     IllegalAst,
 }
 
+#[derive(Debug, Default)]
+pub struct StructData {
+    pub struct_field_id: Option<AstId>,
+    pub child_field_ids: Vec<AstId>,
+}
+
 #[derive(Default, Debug)]
 pub struct Types {
     pub ids: World<Types>,
     pub types: Arena<Types, Type>,
     pub children: Arena<Types, Vec<TypeId>>,
-    pub field_ids: Arena<Types, Vec<AstId>>,
+    pub struct_data: Arena<Types, Option<Box<StructData>>>,
     pub assignments: Arena<Ast, Option<TypeId>>,
 }
 pub type TypeId = Id<Types>;
@@ -232,7 +236,12 @@ impl Types {
                     self.assign(id, func_body_ty)
                 }
             }
-            AstKind::Method => todo!(),
+            AstKind::Method => {
+                errors
+                    .log(ErrorKind::Type, "TODO: implement Method type checker")
+                    .location_opt(*id.get(&ast.locations));
+                self.assign_new(id, Type::Unknown)
+            }
             AstKind::Group => self.assign_new(id, Type::Error),
             AstKind::Func => {
                 let tid = self.assign_new(id, Type::Weak);
@@ -297,10 +306,14 @@ impl Types {
                             return self.assign_new(id, Type::Error);
                         }
                         let ident = field.get(&ast.idents);
+                        let struct_data = base_ty
+                            .get(&self.struct_data)
+                            .as_ref()
+                            .expect("struct should have struct data");
                         for (field_tid, field_id) in base_ty
                             .get(&self.children)
                             .iter()
-                            .zip(base_ty.get(&self.field_ids))
+                            .zip(struct_data.child_field_ids.iter())
                         {
                             if field_id.get(&ast.idents) == ident {
                                 return self.assign(id, *field_tid);
@@ -329,7 +342,12 @@ impl Types {
                     }
                 }
             }
-            AstKind::Index => todo!(),
+            AstKind::Index => {
+                errors
+                    .log(ErrorKind::Type, "TODO: implement Index type checker")
+                    .location_opt(*id.get(&ast.locations));
+                self.assign_new(id, Type::Unknown)
+            }
             AstKind::Tuple => {
                 let tid = self.assign_new(id, Type::Tuple);
                 for child in id.get(&ast.children) {
@@ -340,11 +358,13 @@ impl Types {
             }
             AstKind::Struct => {
                 let tid = self.assign_new(id, Type::Struct);
+                let mut struct_data = StructData::default();
                 for child in id.get(&ast.children) {
                     let child_tid = self.compute(ast, errors, *child);
                     tid.get_mut(&mut self.children).push(child_tid);
-                    tid.get_mut(&mut self.field_ids).push(*child);
+                    struct_data.child_field_ids.push(*child);
                 }
+                tid.put(&mut self.struct_data, Some(Box::new(struct_data)));
                 tid
             }
             AstKind::Array => {
@@ -386,8 +406,22 @@ impl Types {
                 tid.get_mut(&mut self.children).push(expr_tid);
                 tid
             }
-            AstKind::Field => self.compute(ast, errors, id.get(&ast.children)[1]),
-            AstKind::Arg => todo!(),
+            AstKind::Field => {
+                let tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                if *id.get(&ast.children)[0].get(&ast.kinds) == AstKind::Struct {
+                    tid.get_mut(&mut self.struct_data)
+                        .as_mut()
+                        .expect("struct should have struct data")
+                        .struct_field_id = Some(id);
+                }
+                tid
+            }
+            AstKind::Arg => {
+                errors
+                    .log(ErrorKind::Type, "TODO: implement Arg type checker")
+                    .location_opt(*id.get(&ast.locations));
+                self.assign_new(id, Type::Unknown)
+            }
             AstKind::Optional => {
                 let tid = self.assign_new(id, Type::Optional);
                 let child_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
@@ -505,7 +539,7 @@ impl Types {
         }
     }
 
-    fn write_type_into(&self, tid: TypeId, ast: &Ast, buf: &mut String) {
+    fn write_type_into(&self, tid: TypeId, first: bool, ast: &Ast, buf: &mut String) {
         let ty = tid.get(&self.types);
         match ty {
             Type::None => *buf += "_",
@@ -523,39 +557,54 @@ impl Types {
                         *buf += ", ";
                     }
                     first = false;
-                    self.write_type_into(*child, ast, buf);
+                    self.write_type_into(*child, false, ast, buf);
                 }
                 *buf += ")";
             }
             Type::Struct => {
-                *buf += "(";
-                let mut first = true;
-                for (child, id) in tid.get(&self.children).iter().zip(tid.get(&self.field_ids)) {
-                    if !first {
-                        *buf += ", ";
+                let struct_data = tid
+                    .get(&self.struct_data)
+                    .as_ref()
+                    .expect("struct should have struct data");
+                if first {
+                    *buf += "(";
+                    let mut first = true;
+                    for (child, child_id) in tid
+                        .get(&self.children)
+                        .iter()
+                        .zip(struct_data.child_field_ids.iter())
+                    {
+                        if !first {
+                            *buf += ", ";
+                        }
+                        first = false;
+                        *buf += child_id.get(&ast.idents).as_str();
+                        *buf += " ";
+                        self.write_type_into(*child, false, ast, buf);
                     }
-                    first = false;
-                    *buf += id.get(&ast.idents).as_str();
-                    *buf += " ";
-                    self.write_type_into(*child, ast, buf);
+                    *buf += ")";
+                } else {
+                    match struct_data.struct_field_id {
+                        Some(id) => *buf += id.get(&ast.idents).as_str(),
+                        None => *buf += "(...)",
+                    }
                 }
-                *buf += ")";
             }
             Type::Func => {
-                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
                 *buf += " ";
-                self.write_type_into(tid.get(&self.children)[1], ast, buf);
+                self.write_type_into(tid.get(&self.children)[1], false, ast, buf);
             }
             Type::Vector => {
                 *buf += "[]";
-                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
             }
             Type::Array(n) => {
                 *buf += &format!("[{n}]");
-                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
             }
             Type::Optional => {
-                self.write_type_into(tid.get(&self.children)[0], ast, buf);
+                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
                 *buf += "?";
             }
             Type::Unknown => *buf += "__Unknown",
@@ -566,59 +615,8 @@ impl Types {
 
     pub fn string_of_type(&self, tid: TypeId, ast: &Ast) -> String {
         let mut result = String::new();
-        self.write_type_into(tid, ast, &mut result);
+        self.write_type_into(tid, true, ast, &mut result);
         result
-    }
-
-    fn pretty_print_type(&self, tid: TypeId, seen: &mut HashSet<TypeId>) {
-        if seen.contains(&tid) {
-            print!("{}", format!("[{}]", tid.index()).bright_black());
-            return;
-        }
-        seen.insert(tid);
-
-        let ty = tid.get(&self.types);
-        match ty {
-            Type::None => print!("{}", "_".blue().bold()),
-            Type::String => print!("{}", "String".blue().bold()),
-            Type::Char => print!("{}", "Char".blue().bold()),
-            Type::I32 => print!("{}", "I32".blue().bold()),
-            Type::ConstI32(i) => print!("{}", i.to_string().blue().bold()),
-            Type::F32 => print!("{}", "F32".blue().bold()),
-            Type::Bool => print!("{}", "Bool".blue().bold()),
-            Type::Struct | Type::Tuple => {
-                print!("{}", "(".blue().bold());
-                let mut first = true;
-                for child in tid.get(&self.children) {
-                    if !first {
-                        print!("{} ", ",".blue().bold());
-                    }
-                    first = false;
-                    self.pretty_print_type(*child, seen);
-                }
-                print!("{}", ")".blue().bold());
-            }
-            Type::Func => {
-                self.pretty_print_type(tid.get(&self.children)[0], seen);
-                print!(" ");
-                self.pretty_print_type(tid.get(&self.children)[1], seen);
-            }
-            Type::Vector => {
-                print!("{}", "[]".to_string().blue().bold());
-                self.pretty_print_type(tid.get(&self.children)[0], seen);
-            }
-            Type::Array(n) => {
-                print!("{}", format!("[{n}]").blue().bold());
-                self.pretty_print_type(tid.get(&self.children)[0], seen);
-            }
-            Type::Optional => {
-                self.pretty_print_type(tid.get(&self.children)[0], seen);
-                print!("{}", "?".to_string().blue().bold());
-            }
-            Type::Unknown => print!("{}", "Unknown".blue().bold()),
-            Type::Error => print!("{}", "Error".blue().bold()),
-            Type::Weak => print!("{}", format!("Weak{}", tid.index()).blue().bold()),
-        }
     }
 
     pub fn pretty_print(&self, ast: &Ast) {
@@ -632,10 +630,9 @@ impl Types {
             if let Some(tid) = tid {
                 print!(
                     "{qualified}{}",
-                    " ".repeat(20_usize.saturating_sub(qualified.len())),
+                    " ".repeat(44_usize.saturating_sub(qualified.len())),
                 );
-                self.pretty_print_type(*tid, &mut HashSet::new());
-                println!();
+                println!("{}", self.string_of_type(*tid, ast).blue().bold());
             } else {
                 print!("{} {qualified} ", "[???]".bright_black());
             }

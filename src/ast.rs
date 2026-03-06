@@ -287,9 +287,12 @@ impl Ast {
 
     pub fn resolve_helper(
         kinds: &Arena<Ast, AstKind>,
+        idents: &Arena<Ast, String>,
         qualified_idents: &mut Arena<Ast, String>,
         qualified_idents_map: &mut HashMap<String, AstId>,
         resolved_idents: &mut Arena<Ast, Option<AstId>>,
+        errors: &mut Errors,
+        locations: &Arena<Ast, Option<Location>>,
         unresolved: &Vec<AstId>,
     ) {
         for id in unresolved {
@@ -305,12 +308,15 @@ impl Ast {
                     }
 
                     // Go up a scope, e.g. ".Vector3.values.x" --> ".Vector3.x"
-                    let Some(rdot) = ident.rfind('.') else {
-                        id.put(qualified_idents, "".to_owned());
-                        break;
-                    };
+                    let rdot = ident.rfind('.').unwrap();
                     let Some(rrdot) = ident[..rdot].rfind('.') else {
                         id.put(qualified_idents, "".to_owned());
+                        errors
+                            .log(
+                                ErrorKind::Resolve,
+                                format!("Unresolved identifier \"{}\"", id.get(idents)),
+                            )
+                            .location_opt(*id.get(locations));
                         break;
                     };
                     ident = format!("{}{}", &ident[..rrdot], &ident[rdot..]);
@@ -319,7 +325,13 @@ impl Ast {
         }
     }
 
-    pub fn resolve_idents(&mut self, files: &Files, root: AstId, prelude: impl Prelude) {
+    pub fn resolve_idents(
+        &mut self,
+        files: &Files,
+        root: AstId,
+        errors: &mut Errors,
+        prelude: impl Prelude,
+    ) {
         let mut idents = Arena::new();
         let mut qualified_idents = Arena::new();
         let mut qualified_idents_map = HashMap::new();
@@ -343,9 +355,12 @@ impl Ast {
         self.qualified_idents = qualified_idents;
         Self::resolve_helper(
             &self.kinds,
+            &self.idents,
             &mut self.qualified_idents,
             &mut qualified_idents_map,
             &mut resolved_idents,
+            errors,
+            &self.locations,
             &unresolved,
         );
         self.resolved_idents = resolved_idents;

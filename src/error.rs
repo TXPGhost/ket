@@ -11,6 +11,7 @@ pub enum ErrorKind {
     Io,
     Lex,
     Parse,
+    Resolve,
     Type,
 
     #[default]

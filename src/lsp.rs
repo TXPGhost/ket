@@ -245,7 +245,7 @@ async fn compile_uri(contents: String, path: &str, state: Arc<CompilerState>) {
         let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
         ast.simplify(root);
         ast.parse_literals(&files, &mut errors);
-        ast.resolve_idents(&files, root, StandardPrelude);
+        ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
         types.compute_types(&ast, &mut errors);
     }
 

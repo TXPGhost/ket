@@ -56,7 +56,7 @@ fn compile(filename: Arc<str>) {
             let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
             ast.pretty_print(root, &files);
             ast.simplify(root);
-            ast.resolve_idents(&files, root, StandardPrelude);
+            ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
             ast.parse_literals(&files, &mut errors);
             ast.pretty_print(root, &files);
             types.compute_types(&ast, &mut errors);
