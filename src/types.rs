@@ -408,7 +408,7 @@ impl Types {
             }
             AstKind::Field => {
                 let tid = self.compute(ast, errors, id.get(&ast.children)[1]);
-                if *id.get(&ast.children)[0].get(&ast.kinds) == AstKind::Struct {
+                if *id.get(&ast.children)[1].get(&ast.kinds) == AstKind::Struct {
                     tid.get_mut(&mut self.struct_data)
                         .as_mut()
                         .expect("struct should have struct data")

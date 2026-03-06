@@ -137,10 +137,10 @@ pub enum TokenKind {
     #[regex(r"_")]
     Underscore,
 
-    #[regex(r"[A-Z][a-zA-Z0-9]*")]
+    #[regex(r"_*[A-Z][a-zA-Z0-9]*")]
     UIdent,
 
-    #[regex(r"[a-z][_a-z0-9]*")]
+    #[regex(r"_*[a-z][_a-z0-9]*")]
     LIdent,
 
     #[regex(r#"["]([^"\\\n]|\\.|\\\n)*["]"#)]
