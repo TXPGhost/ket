@@ -226,8 +226,8 @@ impl Types {
                             ErrorKind::Type,
                             format!(
                                 "Argument type mismatch: expected {} but found {}",
-                                self.string_of_type(func_args_ty, ast),
-                                self.string_of_type(args_ty, ast),
+                                self.string_of_type(func_args_ty, false, ast),
+                                self.string_of_type(args_ty, false, ast),
                             ),
                         )
                         .location_opt(*args.get(&ast.locations));
@@ -315,7 +315,7 @@ impl Types {
                             .iter()
                             .zip(struct_data.child_field_ids.iter())
                         {
-                            if field_id.get(&ast.idents) == ident {
+                            if field_id.get(&ast.children)[0].get(&ast.idents) == ident {
                                 return self.assign(id, *field_tid);
                             }
                         }
@@ -412,7 +412,7 @@ impl Types {
                     tid.get_mut(&mut self.struct_data)
                         .as_mut()
                         .expect("struct should have struct data")
-                        .struct_field_id = Some(id);
+                        .struct_field_id = Some(id.get(&ast.children)[0]);
                 }
                 tid
             }
@@ -539,7 +539,7 @@ impl Types {
         }
     }
 
-    fn write_type_into(&self, tid: TypeId, first: bool, ast: &Ast, buf: &mut String) {
+    fn write_type_into(&self, tid: TypeId, expand: bool, ast: &Ast, buf: &mut String) {
         let ty = tid.get(&self.types);
         match ty {
             Type::None => *buf += "_",
@@ -566,7 +566,13 @@ impl Types {
                     .get(&self.struct_data)
                     .as_ref()
                     .expect("struct should have struct data");
-                if first {
+                let id = struct_data
+                    .struct_field_id
+                    .expect("struct should have field id");
+                // TODO: expand should be an identifier (not a bool)
+                // TODO: is this even the right approach?
+                // - we want expansion when it's the definition _site_ of a struct
+                if expand || *id.get(&ast.kinds) != AstKind::UIdent {
                     *buf += "(";
                     let mut first = true;
                     for (child, child_id) in tid
@@ -578,16 +584,13 @@ impl Types {
                             *buf += ", ";
                         }
                         first = false;
-                        *buf += child_id.get(&ast.idents).as_str();
+                        *buf += child_id.get(&ast.children)[0].get(&ast.idents).as_str();
                         *buf += " ";
                         self.write_type_into(*child, false, ast, buf);
                     }
                     *buf += ")";
                 } else {
-                    match struct_data.struct_field_id {
-                        Some(id) => *buf += id.get(&ast.idents).as_str(),
-                        None => *buf += "(...)",
-                    }
+                    *buf += id.get(&ast.idents).as_str();
                 }
             }
             Type::Func => {
@@ -613,9 +616,9 @@ impl Types {
         }
     }
 
-    pub fn string_of_type(&self, tid: TypeId, ast: &Ast) -> String {
+    pub fn string_of_type(&self, tid: TypeId, expand: bool, ast: &Ast) -> String {
         let mut result = String::new();
-        self.write_type_into(tid, true, ast, &mut result);
+        self.write_type_into(tid, expand, ast, &mut result);
         result
     }
 
@@ -632,7 +635,7 @@ impl Types {
                     "{qualified}{}",
                     " ".repeat(44_usize.saturating_sub(qualified.len())),
                 );
-                println!("{}", self.string_of_type(*tid, ast).blue().bold());
+                println!("{}", self.string_of_type(*tid, true, ast).blue().bold());
             } else {
                 print!("{} {qualified} ", "[???]".bright_black());
             }

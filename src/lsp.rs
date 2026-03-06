@@ -164,7 +164,20 @@ impl LanguageServer for Backend {
         let ident = hovered_id.map(|id| id.get(&ast.qualified_idents));
 
         let msg = match (tid, ident) {
-            (Some(tid), Some(ident)) => format!("`{ident} {}`", types.string_of_type(tid, &ast)),
+            (Some(tid), Some(ident)) => {
+                let mut expand = false;
+                if let Some(struct_data) = &tid.get(&types.struct_data)
+                    && hovered_id.map(|id| id.get(&ast.resolved_idents).unwrap_or(id))
+                        == struct_data.struct_field_id
+                {
+                    expand = true;
+                }
+                format!(
+                    "`{} {}`",
+                    &ident[1.min(ident.len())..],
+                    types.string_of_type(tid, expand, &ast)
+                )
+            }
             _ => match self.recompile_debounce.load(Ordering::SeqCst) {
                 true => "recompiling...".to_owned(),
                 false => format!(

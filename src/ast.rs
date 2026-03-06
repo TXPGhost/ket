@@ -158,11 +158,11 @@ impl Ast {
                     .expect("must have file source to compute qualified idents");
                 let slice = &location.file.get(&files.sources)
                     [location.start as usize..location.end as usize];
-                id.put(idents, slice.to_owned());
+                ident.put(idents, slice.to_owned());
                 let path = format!("{path}.{slice}");
                 ident.put(qualified_idents, path.clone());
                 qualified_idents_map.insert(path.clone(), ident);
-                ident.put(resolved_idents, Some(id.get(children)[1]));
+                ident.put(resolved_idents, Some(id.get(children)[1])); // TODO: what to put here?
                 Self::qualify_helper(
                     id.get(children)[1],
                     &path,
@@ -252,20 +252,10 @@ impl Ast {
                 id.put(qualified_idents, path.clone());
                 unresolved.push(id);
             }
-            _ => {
-                let name = match kind {
-                    AstKind::Block => Some("block"),
-                    AstKind::Struct => Some("struct"),
-                    _ => None,
-                };
-                let path = if let Some(name) = name {
-                    let idx = id.index();
-                    let path = format!("{path}.__{name}{idx}");
-                    id.put(qualified_idents, path.clone());
-                    path
-                } else {
-                    path.to_owned()
-                };
+            AstKind::Block => {
+                let idx = id.index();
+                let path = format!("{path}.__blk{idx}");
+                id.put(qualified_idents, path.clone());
                 for child in id.get(children) {
                     Self::qualify_helper(
                         *child,
@@ -282,9 +272,27 @@ impl Ast {
                     );
                 }
             }
+            _ => {
+                for child in id.get(children) {
+                    Self::qualify_helper(
+                        *child,
+                        path,
+                        files,
+                        kinds,
+                        children,
+                        locations,
+                        idents,
+                        qualified_idents,
+                        qualified_idents_map,
+                        resolved_idents,
+                        unresolved,
+                    );
+                }
+            }
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn resolve_helper(
         kinds: &Arena<Ast, AstKind>,
         idents: &Arena<Ast, String>,
