@@ -12,8 +12,9 @@ add(lhs Vector3, rhs Vector3) {
   Vector3(lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z)
 }
 sub(lhs Vector3, rhs Vector3) {
-  Vector3(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z)
+  add(lhs, neg(rhs))
 }
+neg(self Vector3) Vector3(0.0-self.x, 0.0-self.y, 0.0-self.z)
 mul(lhs Vector3, rhs F32) {
   Vector3(lhs.x * rhs, lhs.y * rhs, lhs.z * rhs)
 }

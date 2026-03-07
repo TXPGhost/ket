@@ -30,7 +30,6 @@ pub enum Type {
     // Internal Types
     #[default]
     Unknown, // a type which is unknown
-    Weak,  // a type which can be coerced into any other type
     Error, // a type which is impossible, resulting from a type error
 }
 
@@ -187,7 +186,7 @@ impl Types {
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
                 let Some(def_id) = id.get(&ast.definitions) else {
-                    return self.assign_new(id, Type::Weak);
+                    return self.assign_new(id, Type::Unknown);
                 };
                 let kind = def_id.get(&ast.kinds);
                 match kind {
@@ -229,9 +228,6 @@ impl Types {
                     Type::Unknown => {
                         return self.assign_new(id, Type::Unknown);
                     }
-                    Type::Weak => {
-                        return self.assign_new(id, Type::Weak);
-                    }
                     _ => {
                         errors
                             .log(ErrorKind::Type, "Cannot call non-function type")
@@ -262,7 +258,7 @@ impl Types {
             }
             AstKind::Group => self.assign_new(id, Type::Error),
             AstKind::Func => {
-                let tid = self.assign_new(id, Type::Weak);
+                let tid = self.assign_new(id, Type::Unknown);
 
                 let args_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
                 tid.get_mut(&mut self.children).push(args_tid);
@@ -408,6 +404,10 @@ impl Types {
                 }
                 if let Some(old_child_tid) = old_child_tid {
                     tid.get_mut(&mut self.children).push(old_child_tid)
+                } else {
+                    let child_tid = self.ids.alloc();
+                    child_tid.put(&mut self.types, Type::Unknown);
+                    tid.get_mut(&mut self.children).push(child_tid);
                 }
                 tid
             }
@@ -440,10 +440,8 @@ impl Types {
                 tid
             }
             AstKind::Arg => {
-                errors
-                    .log(ErrorKind::Type, "TODO: implement Arg type checker")
-                    .location_opt(*id.get(&ast.locations));
-                self.assign_new(id, Type::Unknown)
+                let tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                self.assign(id, tid)
             }
             AstKind::Optional => {
                 let tid = self.assign_new(id, Type::Optional);
@@ -502,23 +500,23 @@ impl Types {
                     let lhs_tid = self.compute(ast, errors, lhs);
                     let rhs_tid = self.compute(ast, errors, rhs);
                     let tid = match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
-                        (Type::Weak, Type::Weak) => {
+                        (Type::Unknown, Type::Unknown) => {
                             rhs.put(&mut self.assignments, Some(lhs_tid));
-                            Type::Weak
+                            Type::Unknown
                         }
-                        (Type::Weak, Type::I32 | Type::ConstI32(_)) => {
+                        (Type::Unknown, Type::I32 | Type::ConstI32(_)) => {
                             lhs_tid.put(&mut self.types, Type::I32);
                             Type::I32
                         }
-                        (Type::I32 | Type::ConstI32(_), Type::Weak) => {
+                        (Type::I32 | Type::ConstI32(_), Type::Unknown) => {
                             rhs_tid.put(&mut self.types, Type::I32);
                             Type::I32
                         }
-                        (Type::Weak, Type::F32) => {
+                        (Type::Unknown, Type::F32) => {
                             lhs_tid.put(&mut self.types, Type::F32);
                             Type::F32
                         }
-                        (Type::F32, Type::Weak) => {
+                        (Type::F32, Type::Unknown) => {
                             rhs_tid.put(&mut self.types, Type::F32);
                             Type::F32
                         }
@@ -636,9 +634,8 @@ impl Types {
                 self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
                 *buf += "?";
             }
-            Type::Unknown => *buf += "__Unknown",
+            Type::Unknown => *buf += &format!("__Unknown{}", tid.index()),
             Type::Error => *buf += "__Error",
-            Type::Weak => *buf += &format!("__Weak{}", tid.index()),
         }
     }
 
