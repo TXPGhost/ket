@@ -1,4 +1,4 @@
-Vector3 (x F32, y F32, z F32, w Vector3)
+Recursive (x F32, y F32, z F32, w Recursive)
 
 generic_vector3 (
   float (
@@ -26,7 +26,7 @@ Hello (
 )
 
 main() {
-  my_vec = Vector3.x + Vector3.y
+  my_vec = generic_vector3.float.Vector3.x + generic_vector3.float.Vector3.y
 
   my_tuple = ((("hello, world!", 42 * 100 + 10)))
   x = my_tuple.1
@@ -36,6 +36,8 @@ main() {
   uoasboub = 100
 
   arr = [1, 1, 5]
+
+  main() + arr
 }
 
 true 1

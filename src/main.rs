@@ -60,7 +60,7 @@ fn compile(filename: Arc<str>) {
             ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
             ast.parse_literals(&files, &mut errors);
             ast.pretty_print(root, &files);
-            types.compute_types(&ast, &mut errors);
+            types.compute_types(&mut ast, &mut errors);
             types.pretty_print(&ast);
         }
     }

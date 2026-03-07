@@ -382,6 +382,8 @@ impl Ast {
             let child = root.get(&self.children)[i];
             self.simplify(child);
             if *child.get(&self.kinds) == AstKind::Group {
+                let loc = *child.get(&self.children)[0].get(&self.locations);
+                root.get_mut(&mut self.children)[i].put(&mut self.locations, loc);
                 root.get_mut(&mut self.children)[i] = child.get(&self.children)[0];
             }
         }

@@ -63,8 +63,8 @@ pub struct Types {
 pub type TypeId = Id<Types>;
 
 impl Types {
-    pub fn compute_types(&mut self, ast: &Ast, errors: &mut Errors) {
-        for id in ast.ids.iter() {
+    pub fn compute_types(&mut self, ast: &mut Ast, errors: &mut Errors) {
+        for id in ast.ids.clone().iter() {
             self.compute(ast, errors, id);
         }
     }
@@ -136,7 +136,7 @@ impl Types {
                 let rhs = rhs.get(&self.children)[0];
                 self.subtype(lhs, rhs)
             }
-            _ => panic!("unimplemented subtype comparison between {lhs_ty:?} and {rhs_ty:?}"),
+            _ => false,
         }
     }
 
@@ -175,7 +175,7 @@ impl Types {
         tid
     }
 
-    fn compute(&mut self, ast: &Ast, errors: &mut Errors, id: AstId) -> TypeId {
+    fn compute(&mut self, ast: &mut Ast, errors: &mut Errors, id: AstId) -> TypeId {
         let existing = *id.get(&self.assignments);
         if let Some(existing) = existing
             && *existing.get(&self.types) != Type::Unknown
@@ -183,11 +183,11 @@ impl Types {
             return existing;
         }
 
-        let kind = id.get(&ast.kinds);
+        let kind = *id.get(&ast.kinds);
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
                 let Some(def_id) = id.get(&ast.definitions) else {
-                    return self.assign_new(id, Type::Unknown);
+                    return self.assign_new(id, Type::Weak);
                 };
                 let kind = def_id.get(&ast.kinds);
                 match kind {
@@ -226,6 +226,9 @@ impl Types {
                         func_ty.get(&self.children)[0],
                         func_ty.get(&self.children)[1],
                     ),
+                    Type::Unknown => {
+                        return self.assign_new(id, Type::Unknown);
+                    }
                     Type::Weak => {
                         return self.assign_new(id, Type::Weak);
                     }
@@ -248,10 +251,8 @@ impl Types {
                             ),
                         )
                         .location_opt(*args.get(&ast.locations));
-                    self.assign_new(id, Type::Error)
-                } else {
-                    self.assign(id, result_ty)
                 }
+                self.assign(id, result_ty)
             }
             AstKind::Method => {
                 errors
@@ -275,8 +276,9 @@ impl Types {
             }
             AstKind::Block => {
                 let mut last_child_tid = None;
-                for child in id.get(&ast.children) {
-                    last_child_tid = Some(self.compute(ast, errors, *child));
+                for i in 0..id.get(&ast.children).len() {
+                    let child = id.get(&ast.children)[i];
+                    last_child_tid = Some(self.compute(ast, errors, child));
                 }
                 if let Some(last_child_tid) = last_child_tid {
                     self.assign(id, last_child_tid)
@@ -336,6 +338,7 @@ impl Types {
                             .zip(struct_data.child_field_ids.iter())
                         {
                             if field_id.get(&ast.children)[0].get(&ast.idents) == ident {
+                                field.put(&mut ast.definitions, Some(*field_id));
                                 return self.assign(id, *field_tid);
                             }
                         }
@@ -370,8 +373,9 @@ impl Types {
             }
             AstKind::Tuple => {
                 let tid = self.assign_new(id, Type::Tuple);
-                for child in id.get(&ast.children) {
-                    let child_tid = self.compute(ast, errors, *child);
+                for i in 0..id.get(&ast.children).len() {
+                    let child = id.get(&ast.children)[i];
+                    let child_tid = self.compute(ast, errors, child);
                     tid.get_mut(&mut self.children).push(child_tid);
                 }
                 tid
@@ -379,10 +383,11 @@ impl Types {
             AstKind::Struct => {
                 let tid = self.assign_new(id, Type::Struct);
                 let mut struct_data = StructData::default();
-                for child in id.get(&ast.children) {
-                    let child_tid = self.compute(ast, errors, *child);
+                for i in 0..id.get(&ast.children).len() {
+                    let child = id.get(&ast.children)[i];
+                    let child_tid = self.compute(ast, errors, child);
                     tid.get_mut(&mut self.children).push(child_tid);
-                    struct_data.child_field_ids.push(*child);
+                    struct_data.child_field_ids.push(child);
                 }
                 tid.put(&mut self.struct_data, Some(Box::new(struct_data)));
                 tid
@@ -392,8 +397,9 @@ impl Types {
                 let tid = self.assign_new(id, Type::Array(len));
 
                 let mut old_child_tid = None;
-                for child in id.get(&ast.children) {
-                    let child_tid = self.compute(ast, errors, *child);
+                for i in 0..id.get(&ast.children).len() {
+                    let child = id.get(&ast.children)[i];
+                    let child_tid = self.compute(ast, errors, child);
                     if let Some(old_child_tid) = &mut old_child_tid {
                         *old_child_tid = self.union(*old_child_tid, child_tid);
                     } else {
@@ -430,6 +436,7 @@ impl Types {
                         .expect("struct should have struct data")
                         .struct_field_id = Some(id.get(&ast.children)[0]);
                 }
+                self.assign(id.get(&ast.children)[0], tid);
                 tid
             }
             AstKind::Arg => {
@@ -526,7 +533,10 @@ impl Types {
                         (Type::F32, Type::F32) => Type::F32,
                         _ => {
                             errors
-                                .log(ErrorKind::Type, "Illegal operand")
+                                .log(
+                                    ErrorKind::Type,
+                                    format!("Illegal operand for {kind:?} operator"),
+                                )
                                 .location_opt(*id.get(&ast.locations));
                             Type::Error
                         }

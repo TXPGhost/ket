@@ -171,12 +171,11 @@ impl LanguageServer for Backend {
                 } else {
                     let mut expand = false;
                     if let Some(struct_data) = &tid.get(&types.struct_data)
-                        && let Some(hovered_def_id) = hovered_def_id
-                        && *hovered_def_id == struct_data.struct_field_id
+                        && let Some(Some(hovered_def_id)) = hovered_def_id
+                        && Some(hovered_def_id.get(&ast.children)[0]) == struct_data.struct_field_id
                     {
                         expand = true;
                     }
-                    expand = true;
                     format!(
                         "`{} {}`",
                         &ident[1.min(ident.len())..],
@@ -266,7 +265,7 @@ async fn compile_uri(contents: String, path: &str, state: Arc<CompilerState>) {
         ast.simplify(root);
         ast.parse_literals(&files, &mut errors);
         ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
-        types.compute_types(&ast, &mut errors);
+        types.compute_types(&mut ast, &mut errors);
     }
 
     *state.errors.lock().await = errors;

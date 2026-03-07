@@ -190,7 +190,7 @@ impl<M, I: Index> Id<M, I> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy)]
 pub struct World<M, I: Index = DefaultIndex> {
     next_index: usize,
     has_space: bool,
@@ -223,6 +223,16 @@ impl<M, I: Index> World<M, I> {
     /// Returns the number of provided ids.
     pub fn num_allocs(&self) -> usize {
         self.next_index
+    }
+}
+
+impl<M, I: Index> Clone for World<M, I> {
+    fn clone(&self) -> Self {
+        Self {
+            next_index: self.next_index,
+            has_space: self.has_space,
+            _phantom: self._phantom,
+        }
     }
 }
 
