@@ -165,18 +165,24 @@ impl LanguageServer for Backend {
 
         let msg = match (tid, ident) {
             (Some(tid), Some(ident)) => {
-                let mut expand = false;
-                if let Some(struct_data) = &tid.get(&types.struct_data)
-                    && hovered_id.map(|id| id.get(&ast.resolved_idents).unwrap_or(id))
-                        == struct_data.struct_field_id
-                {
+                let hovered_def_id = hovered_id.map(|id| id.get(&ast.definitions));
+                if hovered_def_id.is_none() {
+                    format!("unable to find definition: \"{}\"", ident)
+                } else {
+                    let mut expand = false;
+                    if let Some(struct_data) = &tid.get(&types.struct_data)
+                        && let Some(hovered_def_id) = hovered_def_id
+                        && *hovered_def_id == struct_data.struct_field_id
+                    {
+                        expand = true;
+                    }
                     expand = true;
+                    format!(
+                        "`{} {}`",
+                        &ident[1.min(ident.len())..],
+                        types.string_of_type(tid, expand, &ast)
+                    )
                 }
-                format!(
-                    "`{} {}`",
-                    &ident[1.min(ident.len())..],
-                    types.string_of_type(tid, expand, &ast)
-                )
             }
             _ => match self.recompile_debounce.load(Ordering::SeqCst) {
                 true => "recompiling...".to_owned(),
@@ -216,10 +222,10 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let Some(resolved) = id.get(&ast.resolved_idents) else {
+        let Some(definition) = id.get(&ast.definitions) else {
             return Ok(None);
         };
-        let Some(loc) = resolved.get(&ast.locations) else {
+        let Some(loc) = definition.get(&ast.locations) else {
             return Ok(None);
         };
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
@@ -256,6 +262,7 @@ async fn compile_uri(contents: String, path: &str, state: Arc<CompilerState>) {
     if let Some(file) = file {
         let tokens = lex_file(file, &files, &mut errors);
         let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
+        ast.compute_locations(root);
         ast.simplify(root);
         ast.parse_literals(&files, &mut errors);
         ast.resolve_idents(&files, root, &mut errors, StandardPrelude);

@@ -55,6 +55,7 @@ fn compile(filename: Arc<str>) {
             let tokens = lex_file(file, &files, &mut errors);
             let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
             ast.pretty_print(root, &files);
+            ast.compute_locations(root);
             ast.simplify(root);
             ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
             ast.parse_literals(&files, &mut errors);

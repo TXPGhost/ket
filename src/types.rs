@@ -87,15 +87,19 @@ impl Types {
     }
 
     fn subtype(&self, lhs: TypeId, rhs: TypeId) -> bool {
-        match (lhs.get(&self.types), rhs.get(&self.types)) {
+        let lhs_ty = lhs.get(&self.types);
+        let rhs_ty = rhs.get(&self.types);
+        match (lhs_ty, rhs_ty) {
             (Type::None, Type::None) => true,
             (Type::String, Type::String) => true,
+            (Type::Char, Type::Char) => true,
             (Type::I32, Type::I32) => true,
+            (Type::F32, Type::F32) => true,
+            (Type::Bool, Type::Bool) => true,
             (Type::ConstI32(_), Type::I32) => true,
             (Type::ConstI32(x), Type::ConstI32(y)) => x == y,
-            (Type::Bool, Type::Bool) => true,
             (Type::Struct, Type::Struct) => lhs == rhs,
-            (Type::Tuple, Type::Tuple) => {
+            (Type::Tuple, Type::Tuple | Type::Struct) => {
                 let lhs_children = lhs.get(&self.children);
                 let rhs_children = rhs.get(&self.children);
                 if lhs_children.len() != rhs_children.len() {
@@ -132,7 +136,7 @@ impl Types {
                 let rhs = rhs.get(&self.children)[0];
                 self.subtype(lhs, rhs)
             }
-            _ => false,
+            _ => panic!("unimplemented subtype comparison between {lhs_ty:?} and {rhs_ty:?}"),
         }
     }
 
@@ -182,11 +186,21 @@ impl Types {
         let kind = id.get(&ast.kinds);
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
-                let Some(rid) = id.get(&ast.resolved_idents) else {
+                let Some(def_id) = id.get(&ast.definitions) else {
                     return self.assign_new(id, Type::Unknown);
                 };
-                let tid = self.compute(ast, errors, *rid);
-                self.assign(id, tid)
+                let kind = def_id.get(&ast.kinds);
+                match kind {
+                    AstKind::Bind | AstKind::Field => {
+                        let tid = self.compute(ast, errors, def_id.get(&ast.children)[1]);
+                        self.assign(id, tid)
+                    }
+                    AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
+                    AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
+                    AstKind::PrimitiveString => self.assign_new(id, Type::String),
+                    AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
+                    _ => unreachable!("unreachable non-definition type: {kind:?}"),
+                }
             }
             AstKind::Void => unreachable!("cannot assign type to void"),
             AstKind::String => self.assign_new(id, Type::String),
@@ -206,34 +220,37 @@ impl Types {
                 let func_ty = self.compute(ast, errors, func);
                 let args_ty = self.compute(ast, errors, args);
 
-                if *func_ty.get(&self.types) == Type::Weak {
-                    return self.assign_new(id, Type::Weak);
-                }
+                let (params_ty, result_ty) = match func_ty.get(&self.types) {
+                    Type::Struct => (func_ty, func_ty),
+                    Type::Func => (
+                        func_ty.get(&self.children)[0],
+                        func_ty.get(&self.children)[1],
+                    ),
+                    Type::Weak => {
+                        return self.assign_new(id, Type::Weak);
+                    }
+                    _ => {
+                        errors
+                            .log(ErrorKind::Type, "Cannot call non-function type")
+                            .location_opt(*id.get(&ast.locations));
+                        return self.assign_new(id, Type::Error);
+                    }
+                };
 
-                if *func_ty.get(&self.types) != Type::Func {
-                    errors
-                        .log(ErrorKind::Type, "Cannot call non-function type")
-                        .location_opt(*id.get(&ast.locations));
-                    return self.assign_new(id, Type::Error);
-                }
-
-                let func_args_ty = func_ty.get(&self.children)[0];
-                let func_body_ty = func_ty.get(&self.children)[1];
-
-                if !self.subtype(args_ty, func_args_ty) {
+                if !self.subtype(args_ty, params_ty) {
                     errors
                         .log(
                             ErrorKind::Type,
                             format!(
                                 "Argument type mismatch: expected {} but found {}",
-                                self.string_of_type(func_args_ty, false, ast),
+                                self.string_of_type(params_ty, false, ast),
                                 self.string_of_type(args_ty, false, ast),
                             ),
                         )
                         .location_opt(*args.get(&ast.locations));
                     self.assign_new(id, Type::Error)
                 } else {
-                    self.assign(id, func_body_ty)
+                    self.assign(id, result_ty)
                 }
             }
             AstKind::Method => {
@@ -290,9 +307,12 @@ impl Types {
                             errors
                                 .log(
                                     ErrorKind::Type,
-                                    format!("Tuple ({}) is too short", num_children),
+                                    format!(
+                                        "Tuple index ({}) is out of bounds for length ({})",
+                                        index, num_children,
+                                    ),
                                 )
-                                .location_opt(*id.get(&ast.locations));
+                                .location_opt(*field.get(&ast.locations));
                             return self.assign_new(id, Type::Error);
                         }
                         let tid = base_ty.get(&self.children)[index];
@@ -374,15 +394,11 @@ impl Types {
                 let mut old_child_tid = None;
                 for child in id.get(&ast.children) {
                     let child_tid = self.compute(ast, errors, *child);
-                    if let Some(old_child_tid) = old_child_tid
-                        && !self.equal(old_child_tid, child_tid)
-                    {
-                        errors
-                            .log(ErrorKind::Type, "Array type mismatch")
-                            .location_opt(*id.get(&ast.locations));
-                        return self.assign_new(id, Type::Error);
+                    if let Some(old_child_tid) = &mut old_child_tid {
+                        *old_child_tid = self.union(*old_child_tid, child_tid);
+                    } else {
+                        old_child_tid = Some(child_tid);
                     }
-                    old_child_tid = Some(child_tid);
                 }
                 if let Some(old_child_tid) = old_child_tid {
                     tid.get_mut(&mut self.children).push(old_child_tid)
@@ -566,13 +582,11 @@ impl Types {
                     .get(&self.struct_data)
                     .as_ref()
                     .expect("struct should have struct data");
-                let id = struct_data
-                    .struct_field_id
-                    .expect("struct should have field id");
+                let id = struct_data.struct_field_id;
                 // TODO: expand should be an identifier (not a bool)
                 // TODO: is this even the right approach?
                 // - we want expansion when it's the definition _site_ of a struct
-                if expand || *id.get(&ast.kinds) != AstKind::UIdent {
+                if expand || id.map(|id| id.get(&ast.kinds)) != Some(&AstKind::UIdent) {
                     *buf += "(";
                     let mut first = true;
                     for (child, child_id) in tid
@@ -589,8 +603,10 @@ impl Types {
                         self.write_type_into(*child, false, ast, buf);
                     }
                     *buf += ")";
-                } else {
+                } else if let Some(id) = id {
                     *buf += id.get(&ast.idents).as_str();
+                } else {
+                    *buf += "(...)";
                 }
             }
             Type::Func => {

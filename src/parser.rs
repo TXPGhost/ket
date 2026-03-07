@@ -283,7 +283,7 @@ impl<'a> Parser<'a> {
         let mut base = match (self.cur(), self.ctx) {
             (QuestionMark, _) => self.parse_if(),
             (LParen, ParserCtx::Type) => self.parse_struct(),
-            (LParen, ParserCtx::Value) => self.parse_tuple(),
+            (LParen, ParserCtx::Value) => self.parse_tuple_or_group(),
             (LSquare, _) => self.parse_array(),
             (LCurl, _) => self.parse_block(),
             _ => self.parse_atom(),
@@ -470,12 +470,16 @@ impl<'a> Parser<'a> {
         id
     }
 
-    fn parse_tuple(&mut self) -> AstId {
-        let id = self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_arg);
+    fn parse_tuple_or_group(&mut self) -> AstId {
+        let id = self.parse_tuple();
         if self.num_children(id) == 1 {
             *id.get_mut(&mut self.ast.kinds) = AstKind::Group;
         }
         id
+    }
+
+    fn parse_tuple(&mut self) -> AstId {
+        self.parse_delimited_list(AstKind::Tuple, LParen, RParen, Self::parse_arg)
     }
 
     fn parse_array(&mut self) -> AstId {

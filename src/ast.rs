@@ -113,13 +113,13 @@ pub struct Ast {
     pub locations: Arena<Ast, Option<Location>>,
     pub idents: Arena<Ast, String>,
     pub qualified_idents: Arena<Ast, String>,
-    pub resolved_idents: Arena<Ast, Option<AstId>>,
+    pub definitions: Arena<Ast, Option<AstId>>,
     pub literals: Arena<Ast, Option<Literal>>,
 }
 pub type AstId = Id<Ast>;
 
 impl Ast {
-    fn compute_locations(&mut self, root: AstId) {
+    pub fn compute_locations(&mut self, root: AstId) {
         fn helper(
             id: AstId,
             locations: &mut Arena<Ast, Option<Location>>,
@@ -136,7 +136,7 @@ impl Ast {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn qualify_helper(
+    pub fn qualify_idents(
         id: AstId,
         path: &str,
         files: &Files,
@@ -145,8 +145,8 @@ impl Ast {
         locations: &Arena<Ast, Option<Location>>,
         idents: &mut Arena<Ast, String>,
         qualified_idents: &mut Arena<Ast, String>,
-        qualified_idents_map: &mut HashMap<String, AstId>,
-        resolved_idents: &mut Arena<Ast, Option<AstId>>,
+        definitions_map: &mut HashMap<String, AstId>,
+        definitions: &mut Arena<Ast, Option<AstId>>,
         unresolved: &mut Vec<AstId>,
     ) {
         let kind = id.get(kinds);
@@ -161,9 +161,10 @@ impl Ast {
                 ident.put(idents, slice.to_owned());
                 let path = format!("{path}.{slice}");
                 ident.put(qualified_idents, path.clone());
-                qualified_idents_map.insert(path.clone(), ident);
-                ident.put(resolved_idents, Some(id.get(children)[1])); // TODO: what to put here?
-                Self::qualify_helper(
+                definitions_map.insert(path.clone(), id);
+                ident.put(definitions, Some(id));
+                id.put(definitions, Some(id));
+                Self::qualify_idents(
                     id.get(children)[1],
                     &path,
                     files,
@@ -172,13 +173,13 @@ impl Ast {
                     locations,
                     idents,
                     qualified_idents,
-                    qualified_idents_map,
-                    resolved_idents,
+                    definitions_map,
+                    definitions,
                     unresolved,
                 );
             }
             AstKind::Arg => {
-                Self::qualify_helper(
+                Self::qualify_idents(
                     id.get(children)[1],
                     path,
                     files,
@@ -187,8 +188,8 @@ impl Ast {
                     locations,
                     idents,
                     qualified_idents,
-                    qualified_idents_map,
-                    resolved_idents,
+                    definitions_map,
+                    definitions,
                     unresolved,
                 );
             }
@@ -202,9 +203,10 @@ impl Ast {
                 lhs.put(idents, slice.to_owned());
                 let path = format!("{path}.{slice}");
                 lhs.put(qualified_idents, path.clone());
-                qualified_idents_map.insert(path.clone(), lhs);
-                lhs.put(resolved_idents, Some(id.get(children)[1]));
-                Self::qualify_helper(
+                definitions_map.insert(path.clone(), id);
+                lhs.put(definitions, Some(id));
+                id.put(definitions, Some(id));
+                Self::qualify_idents(
                     id.get(children)[1],
                     &path,
                     files,
@@ -213,13 +215,20 @@ impl Ast {
                     locations,
                     idents,
                     qualified_idents,
-                    qualified_idents_map,
-                    resolved_idents,
+                    definitions_map,
+                    definitions,
                     unresolved,
                 );
             }
             AstKind::Proj => {
-                Self::qualify_helper(
+                let tgt = id.get(children)[1];
+                let location = tgt
+                    .get(locations)
+                    .expect("must have file source to compute qualified idents");
+                let slice = &location.file.get(&files.sources)
+                    [location.start as usize..location.end as usize];
+                tgt.put(idents, slice.to_owned());
+                Self::qualify_idents(
                     id.get(children)[0],
                     path,
                     files,
@@ -228,18 +237,10 @@ impl Ast {
                     locations,
                     idents,
                     qualified_idents,
-                    qualified_idents_map,
-                    resolved_idents,
+                    definitions_map,
+                    definitions,
                     unresolved,
                 );
-                // TODO: figure out how to qualify the identifier here
-                let tgt = id.get(children)[1];
-                let location = tgt
-                    .get(locations)
-                    .expect("must have file source to compute qualified idents");
-                let slice = &location.file.get(&files.sources)
-                    [location.start as usize..location.end as usize];
-                tgt.put(idents, slice.to_owned());
             }
             AstKind::LIdent | AstKind::UIdent => {
                 let location = id
@@ -257,7 +258,7 @@ impl Ast {
                 let path = format!("{path}.__blk{idx}");
                 id.put(qualified_idents, path.clone());
                 for child in id.get(children) {
-                    Self::qualify_helper(
+                    Self::qualify_idents(
                         *child,
                         &path,
                         files,
@@ -266,15 +267,15 @@ impl Ast {
                         locations,
                         idents,
                         qualified_idents,
-                        qualified_idents_map,
-                        resolved_idents,
+                        definitions_map,
+                        definitions,
                         unresolved,
                     );
                 }
             }
             _ => {
                 for child in id.get(children) {
-                    Self::qualify_helper(
+                    Self::qualify_idents(
                         *child,
                         path,
                         files,
@@ -283,8 +284,8 @@ impl Ast {
                         locations,
                         idents,
                         qualified_idents,
-                        qualified_idents_map,
-                        resolved_idents,
+                        definitions_map,
+                        definitions,
                         unresolved,
                     );
                 }
@@ -293,12 +294,12 @@ impl Ast {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn resolve_helper(
+    pub fn find_definitions(
         kinds: &Arena<Ast, AstKind>,
         idents: &Arena<Ast, String>,
         qualified_idents: &mut Arena<Ast, String>,
-        qualified_idents_map: &mut HashMap<String, AstId>,
-        resolved_idents: &mut Arena<Ast, Option<AstId>>,
+        definitions_map: &mut HashMap<String, AstId>,
+        definitions: &mut Arena<Ast, Option<AstId>>,
         errors: &mut Errors,
         locations: &Arena<Ast, Option<Location>>,
         unresolved: &Vec<AstId>,
@@ -309,9 +310,9 @@ impl Ast {
                 let mut ident = id.get(qualified_idents).to_owned();
                 loop {
                     // If we find an exact match, go with that
-                    if let Some(rid) = qualified_idents_map.get(ident.as_str()) {
+                    if let Some(def_id) = definitions_map.get(ident.as_str()) {
                         id.put(qualified_idents, ident);
-                        id.put(resolved_idents, Some(*rid));
+                        id.put(definitions, Some(*def_id));
                         break;
                     }
 
@@ -329,6 +330,8 @@ impl Ast {
                     };
                     ident = format!("{}{}", &ident[..rrdot], &ident[rdot..]);
                 }
+            } else {
+                unreachable!();
             }
         }
     }
@@ -343,10 +346,10 @@ impl Ast {
         let mut idents = Arena::new();
         let mut qualified_idents = Arena::new();
         let mut qualified_idents_map = HashMap::new();
-        let mut resolved_idents = Arena::new();
+        let mut definitions = Arena::new();
         let mut unresolved = Vec::new();
         prelude.apply(&mut self.ids, &mut self.kinds, &mut qualified_idents_map);
-        Self::qualify_helper(
+        Self::qualify_idents(
             root,
             "",
             files,
@@ -356,22 +359,22 @@ impl Ast {
             &mut idents,
             &mut qualified_idents,
             &mut qualified_idents_map,
-            &mut resolved_idents,
+            &mut definitions,
             &mut unresolved,
         );
         self.idents = idents;
         self.qualified_idents = qualified_idents;
-        Self::resolve_helper(
+        Self::find_definitions(
             &self.kinds,
             &self.idents,
             &mut self.qualified_idents,
             &mut qualified_idents_map,
-            &mut resolved_idents,
+            &mut definitions,
             errors,
             &self.locations,
             &unresolved,
         );
-        self.resolved_idents = resolved_idents;
+        self.definitions = definitions;
     }
 
     pub fn simplify(&mut self, root: AstId) {

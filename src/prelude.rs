@@ -10,7 +10,7 @@ pub trait Prelude {
         &self,
         ids: &mut World<Ast>,
         kinds: &mut Arena<Ast, AstKind>,
-        qualified_idents_map: &mut HashMap<String, Id<Ast>>,
+        definitions_map: &mut HashMap<String, Id<Ast>>,
     );
 }
 
