@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::file::{read_file, read_string};
-use crate::symb::Symbols;
+use crate::symb::{Symbols, resolve_symbols};
 use crate::{
-    ast::Ast, error::Errors, file::Files, lexer::lex_file, parser::Parser,
-    prelude::StandardPrelude, types::Types,
+    ast::Ast, errors::Errors, file::Files, lexer::lex_file, parser::Parser, symb::StandardPrelude,
+    types::Types,
 };
 use tokio::sync::Mutex;
 
@@ -33,8 +33,7 @@ pub async fn compile(contents: Option<String>, path: &str, state: Arc<CompilerSt
 
     let tokens = lex_file(file, &files, &mut errors);
     let root = Parser::new(&tokens, &mut ast, &files, &mut errors).parse();
-    ast.simplify(root);
-    let mut symbols = ast.resolve_symbols(&files, root, &mut errors, StandardPrelude);
+    let mut symbols = resolve_symbols(&mut ast, &files, root, &mut errors, StandardPrelude);
     types.compute_types(&ast, &mut symbols, &mut errors);
 
     *state.errors.lock().await = errors;

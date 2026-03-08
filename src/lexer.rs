@@ -3,7 +3,7 @@ use logos::{Lexer, Logos};
 
 use crate::{
     arena::{Arena, Id, World},
-    error::{ErrorKind, Errors},
+    errors::{ErrorKind, Errors},
     file::{FileId, Files},
 };
 

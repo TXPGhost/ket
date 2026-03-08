@@ -1,34 +1,18 @@
-use std::{
-    io::Write,
-    path::Path,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{io::Write, path::Path, sync::Arc, time::Duration};
 
-use colored::Colorize;
 use notify::RecursiveMode;
 use tokio::runtime::Runtime;
 
-use crate::{
-    ast::Ast,
-    compiler::{CompilerState, compile},
-    error::Errors,
-    file::{Files, read_file},
-    lexer::lex_file,
-    parser::Parser,
-    prelude::StandardPrelude,
-    types::Types,
-};
+use crate::compiler::{CompilerState, compile};
 
 pub mod arena;
 pub mod ast;
 pub mod compiler;
-pub mod error;
+pub mod errors;
 pub mod file;
 pub mod lexer;
 pub mod lsp;
 pub mod parser;
-pub mod prelude;
 pub mod symb;
 pub mod types;
 
@@ -37,7 +21,7 @@ fn clear() {
     std::io::stdout().flush().unwrap();
 }
 
-async fn live(filename: &str) {
+fn live(filename: &str) {
     let runtime = Runtime::new().expect("unable to create runtime");
     let state = Arc::new(CompilerState::default());
     let filename: Arc<str> = filename.into();

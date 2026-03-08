@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 use crate::{
     arena::Arena,
     ast::{Ast, AstId, AstKind, InfixKind, Literal},
-    error::{ErrorKind, Errors},
+    errors::{ErrorKind, Errors},
     file::Files,
     lexer::{
         Location, TokenId,
@@ -225,7 +225,7 @@ impl<'a> Parser<'a> {
                     }
                     id.put(
                         &mut self.ast.literals,
-                        Some(Literal::String((&slice[1..slice.len() - 1]).to_owned())),
+                        Some(Literal::String(slice[1..slice.len() - 1].to_owned())),
                     );
                 }
                 AstKind::Char => {

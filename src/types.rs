@@ -3,7 +3,7 @@ use colored::Colorize;
 use crate::{
     arena::{Arena, Id, World},
     ast::{Ast, AstId, AstKind, InfixKind, Literal},
-    error::{ErrorKind, Errors},
+    errors::{ErrorKind, Errors},
     symb::Symbols,
 };
 

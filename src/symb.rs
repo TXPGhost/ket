@@ -3,10 +3,29 @@ use std::collections::HashMap;
 use crate::{
     arena::Arena,
     ast::{Ast, AstId, AstKind},
-    error::{ErrorKind, Errors},
+    errors::{ErrorKind, Errors},
     file::Files,
-    prelude::Prelude,
 };
+
+pub trait Prelude {
+    fn apply(&self, resolver: &mut Resolver<'_>);
+}
+
+pub struct StandardPrelude;
+impl Prelude for StandardPrelude {
+    fn apply(&self, resolver: &mut Resolver<'_>) {
+        let mut add_primitive = |s: &str, k: AstKind| {
+            let id = resolver.ast.ids.alloc();
+            id.put(&mut resolver.ast.kinds, k);
+            resolver.qualified_idents_map.insert(format!(".{s}"), id);
+        };
+
+        add_primitive("I32", AstKind::PrimitiveI32);
+        add_primitive("F32", AstKind::PrimitiveF32);
+        add_primitive("String", AstKind::PrimitiveString);
+        add_primitive("Char", AstKind::PrimitiveChar);
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct Symbols {
@@ -14,145 +33,115 @@ pub struct Symbols {
     pub definitions: Arena<Ast, Option<AstId>>,
 }
 
-impl Ast {
-    pub fn qualify_idents(
-        &self,
-        id: AstId,
-        path: &str,
-        files: &Files,
-        qualified_idents: &mut Arena<Ast, String>,
-        definitions_map: &mut HashMap<String, AstId>,
-        definitions: &mut Arena<Ast, Option<AstId>>,
-        unresolved: &mut Vec<AstId>,
-    ) {
-        let kind = id.get(&self.kinds);
+pub struct Resolver<'a> {
+    pub ast: &'a mut Ast,
+    pub files: &'a Files,
+    pub symbols: &'a mut Symbols,
+    pub qualified_idents_map: &'a mut HashMap<String, AstId>,
+    pub definitions_map: &'a mut HashMap<String, AstId>,
+    pub unresolved: &'a mut Vec<AstId>,
+}
+
+pub fn resolve_symbols(
+    ast: &mut Ast,
+    files: &Files,
+    root: AstId,
+    errors: &mut Errors,
+    prelude: impl Prelude,
+) -> Symbols {
+    let mut resolver = Resolver {
+        files,
+        ast,
+        symbols: &mut Symbols::default(),
+        qualified_idents_map: &mut HashMap::new(),
+        definitions_map: &mut HashMap::new(),
+        unresolved: &mut Vec::new(),
+    };
+
+    resolver.remove_grouping(root);
+    prelude.apply(&mut resolver);
+    resolver.qualify_idents(root, "");
+    resolver.find_definitions(errors);
+    std::mem::take(resolver.symbols)
+}
+
+impl Resolver<'_> {
+    pub fn qualify_idents(&mut self, id: AstId, path: &str) {
+        let kind = id.get(&self.ast.kinds);
         match kind {
             AstKind::Field => {
-                let field_id = id.get(&self.children)[0];
-                let ident = field_id.get(&self.idents);
+                let field_id = id.get(&self.ast.children)[0];
+                let ident = field_id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
-                field_id.put(qualified_idents, path.clone());
-                definitions_map.insert(path.clone(), id);
-                field_id.put(definitions, Some(id));
-                id.put(definitions, Some(id));
-                self.qualify_idents(
-                    id.get(&self.children)[1],
-                    &path,
-                    files,
-                    qualified_idents,
-                    definitions_map,
-                    definitions,
-                    unresolved,
-                );
+                field_id.put(&mut self.symbols.qualified_idents, path.clone());
+                self.definitions_map.insert(path.clone(), id);
+                field_id.put(&mut self.symbols.definitions, Some(id));
+                id.put(&mut self.symbols.definitions, Some(id));
+                self.qualify_idents(id.get(&self.ast.children)[1], &path);
             }
             AstKind::Arg => {
-                self.qualify_idents(
-                    id.get(&self.children)[1],
-                    path,
-                    files,
-                    qualified_idents,
-                    definitions_map,
-                    definitions,
-                    unresolved,
-                );
+                self.qualify_idents(id.get(&self.ast.children)[1], path);
             }
             AstKind::Bind => {
-                let lhs = id.get(&self.children)[0];
-                let ident = lhs.get(&self.idents);
+                let lhs = id.get(&self.ast.children)[0];
+                let ident = lhs.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
-                lhs.put(qualified_idents, path.clone());
-                definitions_map.insert(path.clone(), id);
-                lhs.put(definitions, Some(id));
-                id.put(definitions, Some(id));
-                self.qualify_idents(
-                    id.get(&self.children)[1],
-                    &path,
-                    files,
-                    qualified_idents,
-                    definitions_map,
-                    definitions,
-                    unresolved,
-                );
+                lhs.put(&mut self.symbols.qualified_idents, path.clone());
+                self.definitions_map.insert(path.clone(), id);
+                lhs.put(&mut self.symbols.definitions, Some(id));
+                id.put(&mut self.symbols.definitions, Some(id));
+                self.qualify_idents(id.get(&self.ast.children)[1], &path);
             }
             AstKind::Proj => {
-                self.qualify_idents(
-                    id.get(&self.children)[0],
-                    path,
-                    files,
-                    qualified_idents,
-                    definitions_map,
-                    definitions,
-                    unresolved,
-                );
+                self.qualify_idents(id.get(&self.ast.children)[0], path);
             }
             AstKind::LIdent | AstKind::UIdent => {
-                let ident = id.get(&self.idents);
+                let ident = id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
-                id.put(qualified_idents, path.clone());
-                unresolved.push(id);
+                id.put(&mut self.symbols.qualified_idents, path.clone());
+                self.unresolved.push(id);
             }
             AstKind::Block => {
                 let idx = id.index();
                 let path = format!("{path}.__blk{idx}");
-                id.put(qualified_idents, path.clone());
-                for child in id.get(&self.children) {
-                    self.qualify_idents(
-                        *child,
-                        &path,
-                        files,
-                        qualified_idents,
-                        definitions_map,
-                        definitions,
-                        unresolved,
-                    );
+                id.put(&mut self.symbols.qualified_idents, path.clone());
+                for i in 0..id.get(&self.ast.children).len() {
+                    let child = id.get(&self.ast.children)[i];
+                    self.qualify_idents(child, &path);
                 }
             }
             _ => {
-                for child in id.get(&self.children) {
-                    self.qualify_idents(
-                        *child,
-                        path,
-                        files,
-                        qualified_idents,
-                        definitions_map,
-                        definitions,
-                        unresolved,
-                    );
+                for i in 0..id.get(&self.ast.children).len() {
+                    let child = id.get(&self.ast.children)[i];
+                    self.qualify_idents(child, path);
                 }
             }
         }
     }
 
-    pub fn find_definitions(
-        &self,
-        qualified_idents: &mut Arena<Ast, String>,
-        definitions_map: &mut HashMap<String, AstId>,
-        definitions: &mut Arena<Ast, Option<AstId>>,
-        errors: &mut Errors,
-        unresolved: &Vec<AstId>,
-    ) {
-        for id in unresolved {
+    pub fn find_definitions(&mut self, errors: &mut Errors) {
+        for id in self.unresolved.iter() {
             // Try to resolve identifiers to their fully qualified names
-            if matches!(id.get(&self.kinds), AstKind::LIdent | AstKind::UIdent) {
-                let mut ident = id.get(qualified_idents).to_owned();
+            if matches!(id.get(&self.ast.kinds), AstKind::LIdent | AstKind::UIdent) {
+                let mut ident = id.get(&self.symbols.qualified_idents).to_owned();
                 loop {
                     // If we find an exact match, go with that
-                    if let Some(def_id) = definitions_map.get(ident.as_str()) {
-                        id.put(qualified_idents, ident);
-                        id.put(definitions, Some(*def_id));
+                    if let Some(def_id) = self.definitions_map.get(ident.as_str()) {
+                        id.put(&mut self.symbols.qualified_idents, ident);
+                        id.put(&mut self.symbols.definitions, Some(*def_id));
                         break;
                     }
 
                     // Go up a scope, e.g. ".Vector3.values.x" --> ".Vector3.x"
                     let rdot = ident.rfind('.').unwrap();
                     let Some(rrdot) = ident[..rdot].rfind('.') else {
-                        id.put(qualified_idents, "".to_owned());
+                        id.put(&mut self.symbols.qualified_idents, "".to_owned());
                         errors
                             .log(
                                 ErrorKind::Resolve,
-                                format!("Unresolved identifier \"{}\"", id.get(&self.idents)),
+                                format!("Unresolved identifier \"{}\"", id.get(&self.ast.idents)),
                             )
-                            .location_opt(*id.get(&self.locations));
+                            .location_opt(*id.get(&self.ast.locations));
                         break;
                     };
                     ident = format!("{}{}", &ident[..rrdot], &ident[rdot..]);
@@ -163,48 +152,14 @@ impl Ast {
         }
     }
 
-    pub fn resolve_symbols(
-        &mut self,
-        files: &Files,
-        root: AstId,
-        errors: &mut Errors,
-        prelude: impl Prelude,
-    ) -> Symbols {
-        let mut qualified_idents = Arena::new();
-        let mut qualified_idents_map = HashMap::new();
-        let mut definitions = Arena::new();
-        let mut unresolved = Vec::new();
-        prelude.apply(&mut self.ids, &mut self.kinds, &mut qualified_idents_map);
-        self.qualify_idents(
-            root,
-            "",
-            &files,
-            &mut qualified_idents,
-            &mut qualified_idents_map,
-            &mut definitions,
-            &mut unresolved,
-        );
-        self.find_definitions(
-            &mut qualified_idents,
-            &mut qualified_idents_map,
-            &mut definitions,
-            errors,
-            &unresolved,
-        );
-        Symbols {
-            qualified_idents,
-            definitions,
-        }
-    }
-
-    pub fn simplify(&mut self, root: AstId) {
-        for i in 0..root.get(&self.children).len() {
-            let child = root.get(&self.children)[i];
-            self.simplify(child);
-            if *child.get(&self.kinds) == AstKind::Group {
-                let loc = *child.get(&self.children)[0].get(&self.locations);
-                root.get_mut(&mut self.children)[i].put(&mut self.locations, loc);
-                root.get_mut(&mut self.children)[i] = child.get(&self.children)[0];
+    pub fn remove_grouping(&mut self, root: AstId) {
+        for i in 0..root.get(&self.ast.children).len() {
+            let child = root.get(&self.ast.children)[i];
+            self.remove_grouping(child);
+            if *child.get(&self.ast.kinds) == AstKind::Group {
+                let loc = *child.get(&self.ast.children)[0].get(&self.ast.locations);
+                root.get_mut(&mut self.ast.children)[i].put(&mut self.ast.locations, loc);
+                root.get_mut(&mut self.ast.children)[i] = child.get(&self.ast.children)[0];
             }
         }
     }

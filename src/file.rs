@@ -1,6 +1,6 @@
 use crate::{
     arena::{Arena, Id, World},
-    error::{ErrorKind, Errors},
+    errors::{ErrorKind, Errors},
 };
 
 #[derive(Default, Debug)]
