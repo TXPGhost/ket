@@ -1,2 +1,8 @@
-Abc _
-hello Abc
+Struct (
+  field String
+  test ()
+)
+
+Test (
+  variables []Struct
+)

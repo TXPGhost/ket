@@ -13,7 +13,7 @@ devices [
       can_configuration="500000|PB12|PB13|Default"
       using="devices"
     )
-    variables=[]_
+    variables=[100]Variable
   )
 ]
 
@@ -21,8 +21,8 @@ true _
 Bool true
 
 Device (
-  variables []Variable
   config DeviceConfig
+  variables []Variable
 )
 
 DeviceConfig (
@@ -38,6 +38,9 @@ DeviceConfig (
   can_configuration String
   using             String
 )
+
+for_some_reason_deviceconfig_is_becoming_an_empty_struct _
+try_removing_it_from_config_on_device_struct _
 
 Variable _
 

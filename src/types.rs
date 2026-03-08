@@ -31,7 +31,7 @@ pub enum Type {
     // Internal Types
     #[default]
     Unknown, // a type which is unknown
-    Error, // a type which is impossible, resulting from a type error
+    Weak, // a type which is coercable into any other type, possibly resulting from a type error
 }
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -112,7 +112,11 @@ impl Types {
                 }
                 self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
             }
+            (Type::Array(0), Type::Vector) => true,
             (Type::Array(_), Type::Vector) => {
+                self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
+            }
+            (Type::Vector, Type::Vector) => {
                 self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
             }
             (Type::Func, Type::Func) => {
@@ -163,7 +167,7 @@ impl Types {
                 tid.get_mut(&mut self.children).push(child);
                 if x == y { Type::Array(x) } else { Type::Vector }
             }
-            _ => Type::Error,
+            _ => Type::Weak,
         };
         *tid.get_mut(&mut self.types) = ty;
         tid
@@ -176,6 +180,7 @@ impl Types {
         errors: &mut Errors,
         id: AstId,
     ) -> TypeId {
+        println!("computing types for \"{}\"", id.get(&ast.idents));
         let existing = *id.get(&self.assignments);
         if let Some(existing) = existing
             && *existing.get(&self.types) != Type::Unknown
@@ -187,7 +192,7 @@ impl Types {
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
                 let Some(def_id) = id.get(&symbols.definitions) else {
-                    return self.assign_new(id, Type::Unknown);
+                    return self.assign_new(id, Type::Weak);
                 };
                 let kind = def_id.get(&ast.kinds);
                 match kind {
@@ -229,14 +234,14 @@ impl Types {
                         func_ty.get(&self.children)[0],
                         func_ty.get(&self.children)[1],
                     ),
-                    Type::Unknown => {
-                        return self.assign_new(id, Type::Unknown);
+                    Type::Weak => {
+                        return self.assign_new(id, Type::Weak);
                     }
                     _ => {
                         errors
                             .log(ErrorKind::Type, "Cannot call non-function type")
                             .location_opt(*id.get(&ast.locations));
-                        return self.assign_new(id, Type::Error);
+                        return self.assign_new(id, Type::Weak);
                     }
                 };
 
@@ -264,6 +269,7 @@ impl Types {
                         .location_opt(*args.get(&ast.locations));
                 } else {
                     for i in 0..n_args {
+                        let arg_id = args.get(&ast.children)[i];
                         let arg_ty = args_ty.get(&self.children)[i];
                         let param_ty = params_ty.get(&self.children)[i];
 
@@ -277,7 +283,31 @@ impl Types {
                                         self.string_of_type(arg_ty, false, ast),
                                     ),
                                 )
-                                .location_opt(*args.get(&ast.children)[i].get(&ast.locations));
+                                .location_opt(*arg_id.get(&ast.locations));
+                        }
+
+                        if *arg_id.get(&ast.kinds) == AstKind::Arg
+                            && *func_ty.get(&self.types) == Type::Struct
+                        {
+                            let arg_name = arg_id.get(&ast.idents);
+                            let struct_id = func
+                                .get(&symbols.definitions)
+                                .expect("struct should have definition")
+                                .get(&ast.children)[0];
+                            let field_id = struct_id.get(&ast.children)[i];
+                            let field_name = field_id.get(&ast.idents);
+                            if arg_name != field_name {
+                                errors
+                                    .log(
+                                        ErrorKind::Type,
+                                        format!(
+                                            "Argument name mismatch: should be \"{}\" but instead found \"{}\"",
+                                            field_name, arg_name,
+                                        ),
+                                    )
+                                    .location_opt(*arg_id.get(&ast.locations));
+                            }
+                            arg_id.put(&mut symbols.definitions, Some(field_id));
                         }
                     }
                 }
@@ -287,11 +317,11 @@ impl Types {
                 errors
                     .log(ErrorKind::Type, "TODO: implement Method type checker")
                     .location_opt(*id.get(&ast.locations));
-                self.assign_new(id, Type::Unknown)
+                self.assign_new(id, Type::Weak)
             }
-            AstKind::Group => self.assign_new(id, Type::Error),
+            AstKind::Group => self.assign_new(id, Type::Weak),
             AstKind::Func => {
-                let tid = self.assign_new(id, Type::Unknown);
+                let tid = self.assign_new(id, Type::Weak);
 
                 let args_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 tid.get_mut(&mut self.children).push(args_tid);
@@ -327,7 +357,7 @@ impl Types {
                             errors
                                 .log(ErrorKind::Type, "Tuple field name must be an integer")
                                 .location_opt(*id.get(&ast.locations));
-                            return self.assign_new(id, Type::Error);
+                            return self.assign_new(id, Type::Weak);
                         }
                         let Some(Literal::Integer(index)) = field.get(&ast.literals) else {
                             unreachable!();
@@ -344,7 +374,7 @@ impl Types {
                                     ),
                                 )
                                 .location_opt(*field.get(&ast.locations));
-                            return self.assign_new(id, Type::Error);
+                            return self.assign_new(id, Type::Weak);
                         }
                         let tid = base_ty.get(&self.children)[index];
                         self.assign(id, tid)
@@ -354,20 +384,19 @@ impl Types {
                             errors
                                 .log(ErrorKind::Type, "Struct field name must be an identifier")
                                 .location_opt(*id.get(&ast.locations));
-                            return self.assign_new(id, Type::Error);
+                            return self.assign_new(id, Type::Weak);
                         }
                         let ident = field.get(&ast.idents);
-                        let def_id = base_ty
-                            .get(&self.definitions)
-                            .expect("struct must have type definition");
-                        for (field_tid, field_id) in base_ty
-                            .get(&self.children)
-                            .iter()
-                            .zip(def_id.get(&ast.children).iter())
-                        {
-                            if field_id.get(&ast.idents) == ident {
-                                field.put(&mut symbols.definitions, Some(*field_id));
-                                return self.assign(id, *field_tid);
+                        for field_id in base_ty.get(&self.children) {
+                            let field_def_id = field_id
+                                .get(&self.definitions)
+                                .expect("field must have definition");
+                            if field_def_id.get(&ast.idents) == ident {
+                                let field_def_tid = field_def_id
+                                    .get(&self.assignments)
+                                    .expect("field should have type");
+                                field.put(&mut symbols.definitions, Some(field_def_id));
+                                return self.assign(id, field_def_tid);
                             }
                         }
                         errors
@@ -380,16 +409,19 @@ impl Types {
                                 ),
                             )
                             .location_opt(*id.get(&ast.locations));
-                        self.assign_new(id, Type::Error)
+                        self.assign_new(id, Type::Weak)
                     }
                     _ => {
                         errors
                             .log(
                                 ErrorKind::Type,
-                                "Projection operator not supported for the given type",
+                                format!(
+                                    "Projection operator not supported for type {:?}",
+                                    base_ty.get(&self.types)
+                                ),
                             )
                             .location_opt(*id.get(&ast.locations));
-                        self.assign_new(id, Type::Error)
+                        self.assign_new(id, Type::Weak)
                     }
                 }
             }
@@ -397,7 +429,7 @@ impl Types {
                 errors
                     .log(ErrorKind::Type, "TODO: implement Index type checker")
                     .location_opt(*id.get(&ast.locations));
-                self.assign_new(id, Type::Unknown)
+                self.assign_new(id, Type::Weak)
             }
             AstKind::Tuple => {
                 let tid = self.assign_new(id, Type::Tuple);
@@ -435,7 +467,7 @@ impl Types {
                     tid.get_mut(&mut self.children).push(old_child_tid)
                 } else {
                     let child_tid = self.ids.alloc();
-                    child_tid.put(&mut self.types, Type::Unknown);
+                    child_tid.put(&mut self.types, Type::Weak);
                     tid.get_mut(&mut self.children).push(child_tid);
                 }
                 tid
@@ -464,7 +496,7 @@ impl Types {
                 tid
             }
             AstKind::Arg => {
-                let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
+                let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 self.assign(id, tid)
             }
             AstKind::Optional => {
@@ -523,23 +555,23 @@ impl Types {
                     let lhs_tid = self.compute(ast, symbols, errors, lhs);
                     let rhs_tid = self.compute(ast, symbols, errors, rhs);
                     let tid = match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
-                        (Type::Unknown, Type::Unknown) => {
+                        (Type::Weak, Type::Weak) => {
                             rhs.put(&mut self.assignments, Some(lhs_tid));
-                            Type::Unknown
+                            Type::Weak
                         }
-                        (Type::Unknown, Type::I32 | Type::ConstI32(_)) => {
+                        (Type::Weak, Type::I32 | Type::ConstI32(_)) => {
                             lhs_tid.put(&mut self.types, Type::I32);
                             Type::I32
                         }
-                        (Type::I32 | Type::ConstI32(_), Type::Unknown) => {
+                        (Type::I32 | Type::ConstI32(_), Type::Weak) => {
                             rhs_tid.put(&mut self.types, Type::I32);
                             Type::I32
                         }
-                        (Type::Unknown, Type::F32) => {
+                        (Type::Weak, Type::F32) => {
                             lhs_tid.put(&mut self.types, Type::F32);
                             Type::F32
                         }
-                        (Type::F32, Type::Unknown) => {
+                        (Type::F32, Type::Weak) => {
                             rhs_tid.put(&mut self.types, Type::F32);
                             Type::F32
                         }
@@ -559,7 +591,7 @@ impl Types {
                                     format!("Illegal operand for {kind:?} operator"),
                                 )
                                 .location_opt(*id.get(&ast.locations));
-                            Type::Error
+                            Type::Weak
                         }
                     };
                     self.assign_new(id, tid)
@@ -578,7 +610,7 @@ impl Types {
                     self.assign_new(id, Type::Bool)
                 }
             },
-            AstKind::Error => self.assign_new(id, Type::Unknown),
+            AstKind::Error => self.assign_new(id, Type::Weak),
             AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
             AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
             AstKind::PrimitiveString => self.assign_new(id, Type::String),
@@ -657,8 +689,8 @@ impl Types {
                 self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
                 *buf += "?";
             }
-            Type::Unknown => *buf += &format!("__Unknown{}", tid.index()),
-            Type::Error => *buf += "__Error",
+            Type::Unknown => *buf += "Unknown",
+            Type::Weak => *buf += &format!("__Weak{}", tid.index()),
         }
     }
 

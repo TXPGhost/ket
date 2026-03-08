@@ -84,7 +84,7 @@ impl Resolver<'_> {
                 self.qualify_idents(id.get(&self.ast.children)[0], &path);
             }
             AstKind::Arg => {
-                self.qualify_idents(id.get(&self.ast.children)[1], path);
+                self.qualify_idents(id.get(&self.ast.children)[0], path);
             }
             AstKind::Bind => {
                 let ident = id.get(&self.ast.idents);
@@ -131,7 +131,6 @@ impl Resolver<'_> {
                     id.get(&self.ast.idents)
                 );
                 loop {
-                    println!("checking with {ident}");
                     // If we find an exact match, go with that
                     if let Some(def_id) = self.definitions_map.get(ident.as_str()) {
                         id.put(&mut self.symbols.qualified_idents, ident);

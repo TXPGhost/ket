@@ -28,8 +28,12 @@ Hello (
 main() {
   my_vec = generic_vector3.float.Vector3.x + generic_vector3.float.Vector3.y
 
+  test = generic_vector3.float.Vector3(x=1.0, y=2.0, z=3.0)
+
   my_tuple = ((("hello, world!", 42 * 100 + 10)))
   x = my_tuple.1
+
+  test = my_tuple.0
 
   hello = Hello
 

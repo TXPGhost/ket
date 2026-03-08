@@ -17,7 +17,5 @@ Socket (addr String)
 main() {
   my_sock = Socket(x="127.0.0.1:8080")
 
-  my_sock:close()
-
   x = []
 }

@@ -171,7 +171,9 @@ impl LanguageServer for Backend {
 
         let msg = if let Some(hovered_def_id) = hovered_id.get(&symbols.definitions) {
             let mut expand = false;
-            if *hovered_def_id == hovered_id {
+            if hovered_def_id.get(&symbols.qualified_idents)
+                == hovered_id.get(&symbols.qualified_idents)
+            {
                 expand = true;
             }
             format!(
@@ -180,7 +182,7 @@ impl LanguageServer for Backend {
                 types.string_of_type(*tid, expand, &ast)
             )
         } else {
-            format!("unable to find definition: \"{}\"", ident)
+            return Ok(None);
         };
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::String(msg)),

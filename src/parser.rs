@@ -310,11 +310,10 @@ impl<'a> Parser<'a> {
 
     fn parse_arg(&mut self) -> AstId {
         if self.matches_ahead(&[TokenKind::Equals], 1) {
-            let id = self.node(AstKind::Arg);
-            let ident = self.parse_ident();
+            let id = self.parse_ident();
+            id.put(&mut self.ast.kinds, AstKind::Arg);
             self.eat();
             let expr = self.parse_expr();
-            self.push_child(id, ident);
             self.push_child(id, expr);
             return id;
         }
@@ -637,7 +636,9 @@ impl Ast {
             let mut location = *id.get(locations);
             for child in id.get(children) {
                 helper(*child, locations, children, kinds);
-                if !matches!(id.get(kinds), AstKind::Field | AstKind::Bind) {
+
+                // Certain AST nodes don't conform to the child-merge rule for locations
+                if !matches!(id.get(kinds), AstKind::Field | AstKind::Bind | AstKind::Arg) {
                     location = Location::merge(&location, child.get(locations));
                 }
             }
