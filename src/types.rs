@@ -28,6 +28,7 @@ pub enum Type {
     Vector,
     Array(usize),
     Optional,
+    Union,
 
     // Internal Types
     #[default]
@@ -161,6 +162,7 @@ impl Types {
         if self.supertype(lhs, rhs) {
             return lhs;
         }
+
         let tid = self.ids.alloc();
         let lhs_ty = *lhs.get(&self.types);
         let rhs_ty = *rhs.get(&self.types);
@@ -175,6 +177,31 @@ impl Types {
                 let child = self.union(lhs_child, rhs_child, errors);
                 tid.get_mut(&mut self.children).push(child);
                 if x == y { Type::Array(x) } else { Type::Vector }
+            }
+            (Type::Optional, Type::Optional) => {
+                let lhs_inner = lhs.get(&self.children)[0];
+                let rhs_inner = rhs.get(&self.children)[0];
+                let union = self.union(lhs_inner, rhs_inner, errors);
+                tid.get_mut(&mut self.children).push(union);
+                Type::Optional
+            }
+            (Type::Optional, Type::None) => {
+                let inner = lhs.get(&self.children)[0];
+                tid.get_mut(&mut self.children).push(inner);
+                Type::Optional
+            }
+            (Type::None, Type::Optional) => {
+                let inner = rhs.get(&self.children)[0];
+                tid.get_mut(&mut self.children).push(inner);
+                Type::Optional
+            }
+            (_, Type::None) => {
+                tid.get_mut(&mut self.children).push(lhs);
+                Type::Optional
+            }
+            (Type::None, _) => {
+                tid.get_mut(&mut self.children).push(rhs);
+                Type::Optional
             }
             _ => {
                 errors.log(
@@ -544,10 +571,19 @@ impl Types {
                 let body = id.get(&ast.children)[1];
                 let cond_tid = self.compute(ast, symbols, errors, cond);
                 self.compute(ast, symbols, errors, body);
-                if *cond_tid.get(&self.types) != Type::Bool {
-                    errors
-                        .log(ErrorKind::Type, "If condition must be of type Bool")
-                        .location_opt(*id.get(&ast.locations));
+                match cond_tid.get(&self.types) {
+                    Type::Bool => {}
+                    Type::Optional => {
+                        // TODO: handle shadowed re-typing
+                    }
+                    _ => {
+                        errors
+                            .log(
+                                ErrorKind::Type,
+                                "If condition must be of type Bool or Optional",
+                            )
+                            .location_opt(*id.get(&ast.locations));
+                    }
                 }
                 self.assign_new(id, Type::None)
             }
@@ -558,10 +594,20 @@ impl Types {
                 let cond_tid = self.compute(ast, symbols, errors, cond);
                 let body_tid = self.compute(ast, symbols, errors, body);
                 let else_body_tid = self.compute(ast, symbols, errors, else_body);
-                if *cond_tid.get(&self.types) != Type::Bool {
-                    errors
-                        .log(ErrorKind::Type, "If condition must be of type Bool")
-                        .location_opt(*id.get(&ast.locations));
+                match cond_tid.get(&self.types) {
+                    Type::Bool => {}
+                    Type::Optional => {}
+                    Type::Optional => {
+                        // TODO: handle shadowed re-typing
+                    }
+                    _ => {
+                        errors
+                            .log(
+                                ErrorKind::Type,
+                                "If condition must be of type Bool or Optional",
+                            )
+                            .location_opt(*id.get(&ast.locations));
+                    }
                 }
                 let tid = self.union(body_tid, else_body_tid, errors);
                 self.assign(id, tid)
@@ -724,6 +770,16 @@ impl Types {
             Type::Optional => {
                 self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
                 *buf += "?";
+            }
+            Type::Union => {
+                let mut first = true;
+                for child in tid.get(&self.children) {
+                    if !first {
+                        *buf += "|";
+                    }
+                    first = false;
+                    self.write_type_into(*child, false, ast, buf);
+                }
             }
             Type::Unknown => *buf += "Unknown",
             Type::Weak => *buf += &format!("__Weak{}", tid.index()),
