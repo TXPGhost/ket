@@ -26,6 +26,9 @@ impl Prelude for StandardPrelude {
         add_primitive("F32", AstKind::PrimitiveF32);
         add_primitive("String", AstKind::PrimitiveString);
         add_primitive("Char", AstKind::PrimitiveChar);
+        add_primitive("Bool", AstKind::PrimitiveBool);
+        add_primitive("true", AstKind::PrimitiveTrue);
+        add_primitive("false", AstKind::PrimitiveFalse);
     }
 }
 

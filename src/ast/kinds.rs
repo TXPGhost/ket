@@ -36,6 +36,9 @@ pub enum AstKind {
     PrimitiveF32,
     PrimitiveString,
     PrimitiveChar,
+    PrimitiveBool,
+    PrimitiveTrue,
+    PrimitiveFalse,
 
     #[default]
     Error,

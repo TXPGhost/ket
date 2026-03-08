@@ -23,5 +23,9 @@ main() {
   lhs = unit_x
   rhs = unit_y
 
-  sum = add(lhs, rhss)
+  cond = false
+
+  x = true == false
+
+  sum = add(lhs, rhs)
 }

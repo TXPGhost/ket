@@ -18,7 +18,8 @@ pub enum Type {
     Bool,
 
     // Constants
-    ConstI32(i64),
+    ConstI32(i32),
+    ConstBool(bool),
 
     // Compound types
     Struct,
@@ -84,12 +85,16 @@ impl Types {
         let lhs_ty = lhs.get(&self.types);
         let rhs_ty = rhs.get(&self.types);
         match (lhs_ty, rhs_ty) {
+            (Type::Weak, _) => true,
+            (_, Type::Weak) => true,
             (Type::None, Type::None) => true,
             (Type::String, Type::String) => true,
             (Type::Char, Type::Char) => true,
             (Type::I32, Type::I32) => true,
             (Type::F32, Type::F32) => true,
             (Type::Bool, Type::Bool) => true,
+            (Type::ConstBool(x), Type::ConstBool(y)) => x == y,
+            (Type::ConstBool(_), Type::Bool) => true,
             (Type::ConstI32(_), Type::I32) => true,
             (Type::ConstI32(x), Type::ConstI32(y)) => x == y,
             (Type::Struct, Type::Struct) => lhs == rhs,
@@ -146,7 +151,7 @@ impl Types {
         self.subtype(lhs, rhs) && self.subtype(rhs, lhs)
     }
 
-    fn union(&mut self, lhs: TypeId, rhs: TypeId) -> TypeId {
+    fn union(&mut self, lhs: TypeId, rhs: TypeId, errors: &mut Errors) -> TypeId {
         if self.equal(lhs, rhs) {
             return lhs;
         }
@@ -157,17 +162,27 @@ impl Types {
             return lhs;
         }
         let tid = self.ids.alloc();
-        let ty = match (*lhs.get(&self.types), *rhs.get(&self.types)) {
+        let lhs_ty = *lhs.get(&self.types);
+        let rhs_ty = *rhs.get(&self.types);
+        let ty = match (lhs_ty, rhs_ty) {
             (Type::ConstI32(x), Type::ConstI32(y)) if x == y => Type::ConstI32(x),
+            (Type::ConstBool(x), Type::ConstBool(y)) if x == y => Type::ConstBool(x),
             (Type::ConstI32(_) | Type::I32, Type::ConstI32(_) | Type::I32) => Type::I32,
+            (Type::ConstBool(_) | Type::Bool, Type::ConstBool(_) | Type::Bool) => Type::Bool,
             (Type::Array(x), Type::Array(y)) => {
                 let lhs_child = lhs.get(&self.children)[0];
                 let rhs_child = lhs.get(&self.children)[0];
-                let child = self.union(lhs_child, rhs_child);
+                let child = self.union(lhs_child, rhs_child, errors);
                 tid.get_mut(&mut self.children).push(child);
                 if x == y { Type::Array(x) } else { Type::Vector }
             }
-            _ => Type::Weak,
+            _ => {
+                errors.log(
+                    ErrorKind::Type,
+                    format!("Union of types {lhs_ty:?} and {rhs_ty:?} is not defined",),
+                );
+                Type::Weak
+            }
         };
         *tid.get_mut(&mut self.types) = ty;
         tid
@@ -204,6 +219,9 @@ impl Types {
                     AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
                     AstKind::PrimitiveString => self.assign_new(id, Type::String),
                     AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
+                    AstKind::PrimitiveBool => self.assign_new(id, Type::Bool),
+                    AstKind::PrimitiveTrue => self.assign_new(id, Type::ConstBool(true)),
+                    AstKind::PrimitiveFalse => self.assign_new(id, Type::ConstBool(false)),
                     _ => unreachable!(
                         "unreachable non-definition type {kind:?} for symbol \"{}\"",
                         def_id.get(&ast.idents)
@@ -216,7 +234,7 @@ impl Types {
             AstKind::None => self.assign_new(id, Type::None),
             AstKind::Integer => {
                 if let Some(Literal::Integer(v)) = id.get(&ast.literals) {
-                    self.assign_new(id, Type::ConstI32(*v))
+                    self.assign_new(id, Type::ConstI32(*v as i32))
                 } else {
                     self.assign_new(id, Type::I32)
                 }
@@ -458,7 +476,7 @@ impl Types {
                     let child = id.get(&ast.children)[i];
                     let child_tid = self.compute(ast, symbols, errors, child);
                     if let Some(old_child_tid) = &mut old_child_tid {
-                        *old_child_tid = self.union(*old_child_tid, child_tid);
+                        *old_child_tid = self.union(*old_child_tid, child_tid, errors);
                     } else {
                         old_child_tid = Some(child_tid);
                     }
@@ -545,7 +563,7 @@ impl Types {
                         .log(ErrorKind::Type, "If condition must be of type Bool")
                         .location_opt(*id.get(&ast.locations));
                 }
-                let tid = self.union(body_tid, else_body_tid);
+                let tid = self.union(body_tid, else_body_tid, errors);
                 self.assign(id, tid)
             }
             AstKind::Infix(kind) => match kind {
@@ -585,10 +603,23 @@ impl Types {
                         (Type::I32 | Type::ConstI32(_), Type::I32 | Type::ConstI32(_)) => Type::I32,
                         (Type::F32, Type::F32) => Type::F32,
                         _ => {
+                            let words = match kind {
+                                InfixKind::Add => ("add", "to"),
+                                InfixKind::Sub => ("subtract", "from"),
+                                InfixKind::Mul => ("multiply", "by"),
+                                InfixKind::Div => ("divide", "by"),
+                                _ => unreachable!(),
+                            };
                             errors
                                 .log(
                                     ErrorKind::Type,
-                                    format!("Illegal operand for {kind:?} operator"),
+                                    format!(
+                                        "Cannot {} {} {} {}",
+                                        words.0,
+                                        self.string_of_type(lhs_tid, false, ast),
+                                        words.1,
+                                        self.string_of_type(rhs_tid, false, ast),
+                                    ),
                                 )
                                 .location_opt(*id.get(&ast.locations));
                             Type::Weak
@@ -615,6 +646,9 @@ impl Types {
             AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
             AstKind::PrimitiveString => self.assign_new(id, Type::String),
             AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
+            AstKind::PrimitiveBool => self.assign_new(id, Type::Bool),
+            AstKind::PrimitiveTrue => self.assign_new(id, Type::ConstBool(true)),
+            AstKind::PrimitiveFalse => self.assign_new(id, Type::ConstBool(false)),
         }
     }
 
@@ -622,12 +656,14 @@ impl Types {
         let ty = tid.get(&self.types);
         match ty {
             Type::None => *buf += "_",
-            Type::String => *buf += "__String",
-            Type::Char => *buf += "__Char",
-            Type::I32 => *buf += "__I32",
+            Type::String => *buf += "String",
+            Type::Char => *buf += "Char",
+            Type::I32 => *buf += "I32",
             Type::ConstI32(i) => *buf += &i.to_string(),
-            Type::F32 => *buf += "__F32",
-            Type::Bool => *buf += "__Bool",
+            Type::F32 => *buf += "F32",
+            Type::Bool => *buf += "Bool",
+            Type::ConstBool(true) => *buf += "true",
+            Type::ConstBool(false) => *buf += "false",
             Type::Tuple => {
                 *buf += "(";
                 let mut first = true;
