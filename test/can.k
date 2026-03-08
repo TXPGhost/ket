@@ -36,9 +36,6 @@ DeviceConfig (
   using             String
 )
 
-for_some_reason_deviceconfig_is_becoming_an_empty_struct _
-try_removing_it_from_config_on_device_struct _
-
 Variable _
 
 CanType (

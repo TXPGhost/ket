@@ -431,15 +431,16 @@ impl Types {
                             return self.assign_new(id, Type::Weak);
                         }
                         let ident = field.get(&ast.idents);
-                        for field_id in base_ty.get(&self.children) {
-                            let field_def_id = field_id
-                                .get(&self.definitions)
-                                .expect("field must have definition");
-                            if field_def_id.get(&ast.idents) == ident {
-                                let field_def_tid = field_def_id
+                        let struct_id = base_ty
+                            .get(&self.definitions)
+                            .expect("struct should have definition")
+                            .get(&ast.children)[0];
+                        for field_id in struct_id.get(&ast.children) {
+                            if field_id.get(&ast.idents) == ident {
+                                let field_def_tid = field_id
                                     .get(&self.assignments)
                                     .expect("field should have type");
-                                field.put(&mut symbols.definitions, Some(field_def_id));
+                                field.put(&mut symbols.definitions, Some(*field_id));
                                 return self.assign(id, field_def_tid);
                             }
                         }

@@ -207,17 +207,12 @@ impl LanguageServer for Backend {
             }));
         };
 
-        let msg = if let Some(hovered_def_id) = hovered_id.get(&symbols.definitions) {
-            let mut expand = false;
-            if hovered_def_id.get(&symbols.qualified_idents)
-                == hovered_id.get(&symbols.qualified_idents)
-            {
-                expand = true;
-            }
-            types.string_of_type(*tid, expand, &ast)
+        let expand = if let Some(def_id) = tid.get(&types.definitions) {
+            def_id.get(&symbols.qualified_idents) == hovered_id.get(&symbols.qualified_idents)
         } else {
-            return Ok(None);
+            false
         };
+        let msg = types.string_of_type(*tid, expand, &ast);
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
                 language: String::from("ket"),
