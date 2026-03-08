@@ -155,39 +155,32 @@ impl LanguageServer for Backend {
         let symbols = self.state.symbols.lock().await;
         let types = self.state.types.lock().await;
 
-        let hovered_id = find_ident(position, &ast);
-        let tid = hovered_id.map(|id| id.get(&types.assignments).unwrap());
+        let Some(hovered_id) = find_ident(position, &ast) else {
+            return Ok(None);
+        };
+        let Some(tid) = hovered_id.get(&types.assignments) else {
+            return Ok(Some(Hover {
+                contents: HoverContents::Scalar(MarkedString::String(String::from(
+                    "internal error: no type assignment",
+                ))),
+                range: None,
+            }));
+        };
 
-        let ident = hovered_id.map(|id| id.get(&symbols.qualified_idents));
+        let ident = hovered_id.get(&symbols.qualified_idents);
 
-        let msg = match (tid, ident) {
-            (Some(tid), Some(ident)) => {
-                let hovered_def_id = hovered_id.map(|id| id.get(&symbols.definitions));
-                if hovered_def_id.is_none() {
-                    format!("unable to find definition: \"{}\"", ident)
-                } else {
-                    let mut expand = false;
-                    if let Some(struct_data) = &tid.get(&types.struct_data)
-                        && let Some(Some(hovered_def_id)) = hovered_def_id
-                        && Some(hovered_def_id.get(&ast.children)[0]) == struct_data.struct_field_id
-                    {
-                        expand = true;
-                    }
-                    format!(
-                        "`{} {}`",
-                        &ident[1.min(ident.len())..],
-                        types.string_of_type(tid, expand, &ast)
-                    )
-                }
+        let msg = if let Some(hovered_def_id) = hovered_id.get(&symbols.definitions) {
+            let mut expand = false;
+            if *hovered_def_id == hovered_id {
+                expand = true;
             }
-            _ => match self.recompile_debounce.load(Ordering::SeqCst) {
-                true => "recompiling...".to_owned(),
-                false => format!(
-                    "compiled {} times ({} errors)",
-                    self.compilation_counter.load(Ordering::Relaxed),
-                    self.state.errors.lock().await.ids.iter().count(),
-                ),
-            },
+            format!(
+                "`{} {}`",
+                &ident[1.min(ident.len())..],
+                types.string_of_type(*tid, expand, &ast)
+            )
+        } else {
+            format!("unable to find definition: \"{}\"", ident)
         };
         Ok(Some(Hover {
             contents: HoverContents::Scalar(MarkedString::String(msg)),

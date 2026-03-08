@@ -39,8 +39,6 @@ pub enum Assoc {
     Right,
 }
 
-impl TokenId {}
-
 pub struct Parser<'a> {
     tokens: &'a Tokens,
     cursor: TokenId,
@@ -239,7 +237,11 @@ impl<'a> Parser<'a> {
                         Some(Literal::Char(slice.chars().nth(1).unwrap() as u8)),
                     );
                 }
-                _ => {}
+                AstKind::Void | AstKind::None | AstKind::Error => {}
+                _ => panic!(
+                    "unexpected kind in add_slice_data: {:?}",
+                    id.get(&self.ast.kinds)
+                ),
             }
         }
     }
@@ -264,10 +266,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_field(&mut self) -> AstId {
-        let id = self.node(AstKind::Field);
-        let ident = self.parse_ident();
+        let id = self.parse_ident();
+        id.put(&mut self.ast.kinds, AstKind::Field);
         let expr = self.parse_expr();
-        self.push_child(id, ident);
         self.push_child(id, expr);
         id
     }
@@ -323,16 +324,28 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> AstId {
         let lhs = self.parse_expr();
         if self.matches(&[Equals, ColonEquals, DotEquals]) {
-            let id = match self.try_eat(&[Equals, ColonEquals, DotEquals]) {
-                Some(Equals) => self.node(AstKind::Bind),
-                Some(ColonEquals) => self.node(AstKind::BindMut),
-                Some(DotEquals) => self.node(AstKind::Assign),
+            let kind = match self.try_eat(&[Equals, ColonEquals, DotEquals]) {
+                Some(Equals) => AstKind::Bind,
+                Some(ColonEquals) => AstKind::BindMut,
+                Some(DotEquals) => AstKind::Assign,
                 _ => unreachable!(),
             };
-            let rhs = self.parse_expr();
-            self.push_child(id, lhs);
-            self.push_child(id, rhs);
-            return id;
+
+            if kind == AstKind::Bind {
+                assert!(matches!(
+                    lhs.get(&self.ast.kinds),
+                    AstKind::LIdent | AstKind::UIdent | AstKind::Void
+                ));
+                lhs.put(&mut self.ast.kinds, AstKind::Bind);
+                let rhs = self.parse_expr();
+                self.push_child(lhs, rhs);
+            } else {
+                let id = self.node(kind);
+                let rhs = self.parse_expr();
+                self.push_child(id, lhs);
+                self.push_child(id, rhs);
+                return id;
+            }
         }
         lhs
     }
@@ -619,14 +632,17 @@ impl Ast {
             id: AstId,
             locations: &mut Arena<Ast, Option<Location>>,
             children: &Arena<Ast, SmallVec<[AstId; 4]>>,
+            kinds: &Arena<Ast, AstKind>,
         ) {
             let mut location = *id.get(locations);
             for child in id.get(children) {
-                helper(*child, locations, children);
-                location = Location::merge(&location, child.get(locations));
+                helper(*child, locations, children, kinds);
+                if !matches!(id.get(kinds), AstKind::Field | AstKind::Bind) {
+                    location = Location::merge(&location, child.get(locations));
+                }
             }
             id.put(locations, location);
         }
-        helper(root, &mut self.locations, &self.children)
+        helper(root, &mut self.locations, &self.children, &self.kinds)
     }
 }

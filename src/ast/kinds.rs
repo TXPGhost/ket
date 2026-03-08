@@ -41,15 +41,6 @@ pub enum AstKind {
     Error,
 }
 
-impl AstKind {
-    pub fn has_atomic_data(self) -> bool {
-        matches!(
-            self,
-            Self::LIdent | Self::UIdent | Self::String | Self::Char | Self::Integer | Self::Float
-        )
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum InfixKind {
     Add,

@@ -1,9 +1,12 @@
+use colored::Colorize;
 use std::collections::HashMap;
 
 use crate::{
     arena::Arena,
     ast::{Ast, AstId, AstKind},
     errors::{ErrorKind, Errors},
+    file::Files,
+    lexer::Location,
 };
 
 pub trait Prelude {
@@ -16,7 +19,7 @@ impl Prelude for StandardPrelude {
         let mut add_primitive = |s: &str, k: AstKind| {
             let id = resolver.ast.ids.alloc();
             id.put(&mut resolver.ast.kinds, k);
-            resolver.qualified_idents_map.insert(format!(".{s}"), id);
+            resolver.definitions_map.insert(format!(".{s}"), id);
         };
 
         add_primitive("I32", AstKind::PrimitiveI32);
@@ -36,9 +39,8 @@ pub struct Resolver<'a> {
     pub ast: &'a mut Ast,
     pub symbols: &'a mut Symbols,
     pub errors: &'a mut Errors,
-    pub qualified_idents_map: HashMap<String, AstId>,
     pub definitions_map: HashMap<String, AstId>,
-    pub unresolved: Vec<AstId>,
+    pub undefined_ids: Vec<AstId>,
 }
 
 impl<'a> Resolver<'a> {
@@ -47,46 +49,48 @@ impl<'a> Resolver<'a> {
             ast,
             symbols,
             errors,
-            qualified_idents_map: HashMap::new(),
             definitions_map: HashMap::new(),
-            unresolved: Vec::new(),
+            undefined_ids: Vec::new(),
         }
     }
 
     pub fn resolve(mut self, root: AstId, prelude: impl Prelude) {
-        self.remove_grouping(root);
         prelude.apply(&mut self);
+        self.remove_grouping(root);
         self.qualify_idents(root, "");
         self.find_definitions();
     }
 }
 
 impl Resolver<'_> {
+    pub fn qualify_and_define_self(&mut self, id: AstId, ident: &str) {
+        id.put(&mut self.symbols.qualified_idents, ident.to_owned());
+        id.put(&mut self.symbols.definitions, Some(id));
+        self.definitions_map.insert(ident.to_owned(), id);
+    }
+
+    pub fn qualify_only(&mut self, id: AstId, ident: &str) {
+        id.put(&mut self.symbols.qualified_idents, ident.to_owned());
+        self.undefined_ids.push(id);
+    }
+
     pub fn qualify_idents(&mut self, id: AstId, path: &str) {
         let kind = id.get(&self.ast.kinds);
         match kind {
             AstKind::Field => {
-                let field_id = id.get(&self.ast.children)[0];
-                let ident = field_id.get(&self.ast.idents);
+                let ident = id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
-                field_id.put(&mut self.symbols.qualified_idents, path.clone());
-                self.definitions_map.insert(path.clone(), id);
-                field_id.put(&mut self.symbols.definitions, Some(id));
-                id.put(&mut self.symbols.definitions, Some(id));
-                self.qualify_idents(id.get(&self.ast.children)[1], &path);
+                self.qualify_and_define_self(id, &path);
+                self.qualify_idents(id.get(&self.ast.children)[0], &path);
             }
             AstKind::Arg => {
                 self.qualify_idents(id.get(&self.ast.children)[1], path);
             }
             AstKind::Bind => {
-                let lhs = id.get(&self.ast.children)[0];
-                let ident = lhs.get(&self.ast.idents);
+                let ident = id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
-                lhs.put(&mut self.symbols.qualified_idents, path.clone());
-                self.definitions_map.insert(path.clone(), id);
-                lhs.put(&mut self.symbols.definitions, Some(id));
-                id.put(&mut self.symbols.definitions, Some(id));
-                self.qualify_idents(id.get(&self.ast.children)[1], &path);
+                self.qualify_and_define_self(id, &path);
+                self.qualify_idents(id.get(&self.ast.children)[0], &path);
             }
             AstKind::Proj => {
                 self.qualify_idents(id.get(&self.ast.children)[0], path);
@@ -94,13 +98,12 @@ impl Resolver<'_> {
             AstKind::LIdent | AstKind::UIdent => {
                 let ident = id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
-                id.put(&mut self.symbols.qualified_idents, path.clone());
-                self.unresolved.push(id);
+                self.qualify_only(id, &path);
             }
             AstKind::Block => {
                 let idx = id.index();
                 let path = format!("{path}.__blk{idx}");
-                id.put(&mut self.symbols.qualified_idents, path.clone());
+                self.qualify_and_define_self(id, &path);
                 for i in 0..id.get(&self.ast.children).len() {
                     let child = id.get(&self.ast.children)[i];
                     self.qualify_idents(child, &path);
@@ -116,11 +119,19 @@ impl Resolver<'_> {
     }
 
     pub fn find_definitions(&mut self) {
-        for id in self.unresolved.iter() {
+        println!("map is {:?}", self.symbols.qualified_idents);
+        println!("map is {:?}", self.definitions_map);
+        for id in self.undefined_ids.iter() {
             // Try to resolve identifiers to their fully qualified names
             if matches!(id.get(&self.ast.kinds), AstKind::LIdent | AstKind::UIdent) {
                 let mut ident = id.get(&self.symbols.qualified_idents).to_owned();
+                assert!(
+                    !ident.is_empty(),
+                    "unqualified identifier \"{}\"",
+                    id.get(&self.ast.idents)
+                );
                 loop {
+                    println!("checking with {ident}");
                     // If we find an exact match, go with that
                     if let Some(def_id) = self.definitions_map.get(ident.as_str()) {
                         id.put(&mut self.symbols.qualified_idents, ident);
@@ -137,6 +148,9 @@ impl Resolver<'_> {
                                 ErrorKind::Resolve,
                                 format!("Unresolved identifier \"{}\"", id.get(&self.ast.idents)),
                             )
+                            .location_opt(*id.get(&self.ast.locations));
+                        self.errors
+                            .log(ErrorKind::Resolve, format!("Base qualified: \"{}\"", ident))
                             .location_opt(*id.get(&self.ast.locations));
                         break;
                     };
@@ -158,5 +172,38 @@ impl Resolver<'_> {
                 root.get_mut(&mut self.ast.children)[i] = child.get(&self.ast.children)[0];
             }
         }
+    }
+}
+
+impl Symbols {
+    fn pretty_print_indented(&self, id: AstId, indent: usize, ast: &Ast, files: &Files) {
+        let index_str = id.index().to_string();
+        print!(
+            "{} ",
+            format!(
+                "[{}{}]",
+                " ".repeat(3_usize.saturating_sub(index_str.len())),
+                id.index()
+            )
+            .bright_black()
+        );
+        let kind_str = format!("{:?}", id.get(&ast.kinds));
+        let len = indent * 2 + kind_str.len();
+        print!("{}{} ", "  ".repeat(indent), kind_str.bold().magenta());
+        let location = id.get(&ast.locations);
+        let ident = id.get(&self.qualified_idents);
+        if !ident.is_empty() {
+            print!("{} ", ident);
+        }
+        print!("{} ", " ".repeat(36_usize.saturating_sub(len)));
+        Location::pretty_print_opt(location, files);
+        for child in id.get(&ast.children) {
+            self.pretty_print_indented(*child, indent + 1, ast, files);
+        }
+    }
+
+    pub fn pretty_print(&self, id: AstId, ast: &Ast, files: &Files) {
+        println!();
+        self.pretty_print_indented(id, 0, ast, files);
     }
 }

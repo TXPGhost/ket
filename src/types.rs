@@ -46,18 +46,12 @@ pub enum TypeError {
     IllegalAst,
 }
 
-#[derive(Debug, Default)]
-pub struct StructData {
-    pub struct_field_id: Option<AstId>,
-    pub child_field_ids: Vec<AstId>,
-}
-
 #[derive(Default, Debug)]
 pub struct Types {
     pub ids: World<Types>,
     pub types: Arena<Types, Type>,
+    pub definitions: Arena<Types, Option<AstId>>,
     pub children: Arena<Types, Vec<TypeId>>,
-    pub struct_data: Arena<Types, Option<Box<StructData>>>,
     pub assignments: Arena<Ast, Option<TypeId>>,
 }
 pub type TypeId = Id<Types>;
@@ -198,14 +192,17 @@ impl Types {
                 let kind = def_id.get(&ast.kinds);
                 match kind {
                     AstKind::Bind | AstKind::Field => {
-                        let tid = self.compute(ast, symbols, errors, def_id.get(&ast.children)[1]);
+                        let tid = self.compute(ast, symbols, errors, *def_id);
                         self.assign(id, tid)
                     }
                     AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
                     AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
                     AstKind::PrimitiveString => self.assign_new(id, Type::String),
                     AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
-                    _ => unreachable!("unreachable non-definition type: {kind:?}"),
+                    _ => unreachable!(
+                        "unreachable non-definition type {kind:?} for symbol \"{}\"",
+                        def_id.get(&ast.idents)
+                    ),
                 }
             }
             AstKind::Void => unreachable!("cannot assign type to void"),
@@ -360,16 +357,15 @@ impl Types {
                             return self.assign_new(id, Type::Error);
                         }
                         let ident = field.get(&ast.idents);
-                        let struct_data = base_ty
-                            .get(&self.struct_data)
-                            .as_ref()
-                            .expect("struct should have struct data");
+                        let def_id = base_ty
+                            .get(&self.definitions)
+                            .expect("struct must have type definition");
                         for (field_tid, field_id) in base_ty
                             .get(&self.children)
                             .iter()
-                            .zip(struct_data.child_field_ids.iter())
+                            .zip(def_id.get(&ast.children).iter())
                         {
-                            if field_id.get(&ast.children)[0].get(&ast.idents) == ident {
+                            if field_id.get(&ast.idents) == ident {
                                 field.put(&mut symbols.definitions, Some(*field_id));
                                 return self.assign(id, *field_tid);
                             }
@@ -414,14 +410,11 @@ impl Types {
             }
             AstKind::Struct => {
                 let tid = self.assign_new(id, Type::Struct);
-                let mut struct_data = StructData::default();
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
                     let child_tid = self.compute(ast, symbols, errors, child);
                     tid.get_mut(&mut self.children).push(child_tid);
-                    struct_data.child_field_ids.push(child);
                 }
-                tid.put(&mut self.struct_data, Some(Box::new(struct_data)));
                 tid
             }
             AstKind::Array => {
@@ -464,15 +457,10 @@ impl Types {
                 tid.get_mut(&mut self.children).push(expr_tid);
                 tid
             }
-            AstKind::Field => {
-                let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
-                if *id.get(&ast.children)[1].get(&ast.kinds) == AstKind::Struct {
-                    tid.get_mut(&mut self.struct_data)
-                        .as_mut()
-                        .expect("struct should have struct data")
-                        .struct_field_id = Some(id.get(&ast.children)[0]);
-                }
-                self.assign(id.get(&ast.children)[0], tid);
+            AstKind::Field | AstKind::Bind | AstKind::BindMut => {
+                let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
+                tid.put(&mut self.definitions, Some(id));
+                self.assign(id, tid);
                 tid
             }
             AstKind::Arg => {
@@ -485,7 +473,6 @@ impl Types {
                 tid.get_mut(&mut self.children).push(child_tid);
                 tid
             }
-            AstKind::Bind | AstKind::BindMut => self.assign_new(id, Type::None),
             AstKind::Assign => {
                 let lhs = id.get(&ast.children)[0];
                 let rhs = id.get(&ast.children)[0];
@@ -622,35 +609,32 @@ impl Types {
                 *buf += ")";
             }
             Type::Struct => {
-                let struct_data = tid
-                    .get(&self.struct_data)
-                    .as_ref()
-                    .expect("struct should have struct data");
-                let id = struct_data.struct_field_id;
+                let def_id = tid
+                    .get(&self.definitions)
+                    .expect("struct must have type definition");
                 // TODO: expand should be an identifier (not a bool)
                 // TODO: is this even the right approach?
                 // - we want expansion when it's the definition _site_ of a struct
-                if expand || id.map(|id| id.get(&ast.kinds)) != Some(&AstKind::UIdent) {
+                if expand {
                     *buf += "(";
                     let mut first = true;
+                    let struct_id = def_id.get(&ast.children)[0];
                     for (child, child_id) in tid
                         .get(&self.children)
                         .iter()
-                        .zip(struct_data.child_field_ids.iter())
+                        .zip(struct_id.get(&ast.children).iter())
                     {
                         if !first {
                             *buf += ", ";
                         }
                         first = false;
-                        *buf += child_id.get(&ast.children)[0].get(&ast.idents).as_str();
+                        *buf += child_id.get(&ast.idents).as_str();
                         *buf += " ";
                         self.write_type_into(*child, false, ast, buf);
                     }
                     *buf += ")";
-                } else if let Some(id) = id {
-                    *buf += id.get(&ast.idents).as_str();
                 } else {
-                    *buf += "(...)";
+                    *buf += def_id.get(&ast.idents).as_str();
                 }
             }
             Type::Func => {

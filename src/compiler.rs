@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::ast::AstId;
 use crate::file::{read_file, read_string};
 use crate::lexer::Lexer;
 use crate::resolve::{Resolver, Symbols};
@@ -15,6 +16,7 @@ pub struct CompilerState {
     pub ast: Mutex<Ast>,
     pub symbols: Mutex<Symbols>,
     pub types: Mutex<Types>,
+    pub root: Mutex<Option<AstId>>,
 }
 
 pub async fn compile(contents: Option<String>, path: &str, state: Arc<CompilerState>) {
@@ -42,4 +44,5 @@ pub async fn compile(contents: Option<String>, path: &str, state: Arc<CompilerSt
     *state.ast.lock().await = ast;
     *state.types.lock().await = types;
     *state.symbols.lock().await = symbols;
+    *state.root.lock().await = Some(root);
 }

@@ -30,7 +30,21 @@ fn live(filename: &str) {
         notify_debouncer_mini::new_debouncer(Duration::from_millis(100), move |ev| match ev {
             Ok(_) => {
                 clear();
-                runtime.block_on(compile(None, &filename_clone, state.clone()));
+                runtime.block_on(async {
+                    compile(None, &filename_clone, state.clone()).await;
+
+                    let files = state.files.lock().await;
+                    let ast = state.ast.lock().await;
+                    let symbols = state.symbols.lock().await;
+                    let types = state.types.lock().await;
+                    let root = state.root.lock().await;
+
+                    if let Some(root) = *root {
+                        ast.pretty_print(root, &files);
+                        symbols.pretty_print(root, &ast, &files);
+                        types.pretty_print(&ast, &symbols);
+                    }
+                });
             }
             Err(e) => eprintln!("{}", e),
         })
