@@ -148,9 +148,6 @@ impl Resolver<'_> {
                                 format!("Unresolved identifier \"{}\"", id.get(&self.ast.idents)),
                             )
                             .location_opt(*id.get(&self.ast.locations));
-                        self.errors
-                            .log(ErrorKind::Resolve, format!("Base qualified: \"{}\"", ident))
-                            .location_opt(*id.get(&self.ast.locations));
                         break;
                     };
                     ident = format!("{}{}", &ident[..rrdot], &ident[rdot..]);
