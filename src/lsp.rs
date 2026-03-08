@@ -197,7 +197,7 @@ impl LanguageServer for Backend {
         let Some(hovered_id) = find_ident(position, &ast) else {
             return Ok(None);
         };
-        let Some(tid) = hovered_id.get(&types.assignments) else {
+        let Some(tid) = hovered_id.get(&types.type_assignments) else {
             return Ok(Some(Hover {
                 contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
                     language: String::from("ket"),
@@ -207,7 +207,7 @@ impl LanguageServer for Backend {
             }));
         };
 
-        let expand = if let Some(def_id) = tid.get(&types.definitions) {
+        let expand = if let Some(def_id) = tid.get(&types.type_definitions) {
             def_id.get(&symbols.qualified_idents) == hovered_id.get(&symbols.qualified_idents)
         } else {
             false
@@ -245,7 +245,7 @@ impl LanguageServer for Backend {
         let Some(id) = find_ident(params.text_document_position_params.position, &ast) else {
             return Ok(None);
         };
-        let Some(definition) = id.get(&symbols.definitions) else {
+        let Some(definition) = id.get(&symbols.symbol_definitions) else {
             return Ok(None);
         };
         let Some(loc) = definition.get(&ast.locations) else {
@@ -276,10 +276,10 @@ impl LanguageServer for Backend {
         let Some(id) = find_ident(params.text_document_position_params.position, &ast) else {
             return Ok(None);
         };
-        let Some(tid) = id.get(&types.assignments) else {
+        let Some(tid) = id.get(&types.type_assignments) else {
             return Ok(None);
         };
-        let Some(def_id) = tid.get(&types.definitions) else {
+        let Some(def_id) = tid.get(&types.type_definitions) else {
             return Ok(None);
         };
         let Some(loc) = def_id.get(&ast.locations) else {

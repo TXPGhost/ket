@@ -35,7 +35,7 @@ impl Prelude for StandardPrelude {
 #[derive(Debug, Default)]
 pub struct Symbols {
     pub qualified_idents: Arena<Ast, String>,
-    pub definitions: Arena<Ast, Option<AstId>>,
+    pub symbol_definitions: Arena<Ast, Option<AstId>>,
 }
 
 pub struct Resolver<'a> {
@@ -68,7 +68,7 @@ impl<'a> Resolver<'a> {
 impl Resolver<'_> {
     pub fn qualify_and_define_self(&mut self, id: AstId, ident: &str) {
         id.put(&mut self.symbols.qualified_idents, ident.to_owned());
-        id.put(&mut self.symbols.definitions, Some(id));
+        id.put(&mut self.symbols.symbol_definitions, Some(id));
         self.definitions_map.insert(ident.to_owned(), id);
     }
 
@@ -137,7 +137,7 @@ impl Resolver<'_> {
                     // If we find an exact match, go with that
                     if let Some(def_id) = self.definitions_map.get(ident.as_str()) {
                         id.put(&mut self.symbols.qualified_idents, ident);
-                        id.put(&mut self.symbols.definitions, Some(*def_id));
+                        id.put(&mut self.symbols.symbol_definitions, Some(*def_id));
                         break;
                     }
 

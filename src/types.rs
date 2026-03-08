@@ -52,9 +52,9 @@ pub enum TypeError {
 pub struct Types {
     pub ids: World<Types>,
     pub types: Arena<Types, Type>,
-    pub definitions: Arena<Types, Option<AstId>>,
-    pub children: Arena<Types, Vec<TypeId>>,
-    pub assignments: Arena<Ast, Option<TypeId>>,
+    pub type_definitions: Arena<Types, Option<AstId>>,
+    pub type_children: Arena<Types, Vec<TypeId>>,
+    pub type_assignments: Arena<Ast, Option<TypeId>>,
 }
 pub type TypeId = Id<Types>;
 
@@ -66,19 +66,19 @@ impl Types {
     }
 
     fn assign_new(&mut self, id: AstId, ty: Type) -> TypeId {
-        if let Some(tid) = id.get(&self.assignments) {
+        if let Some(tid) = id.get(&self.type_assignments) {
             tid.put(&mut self.types, ty);
             *tid
         } else {
             let tid = self.ids.alloc();
             tid.put(&mut self.types, ty);
-            id.put(&mut self.assignments, Some(tid));
+            id.put(&mut self.type_assignments, Some(tid));
             tid
         }
     }
 
     fn assign(&mut self, id: AstId, tid: TypeId) -> TypeId {
-        id.put(&mut self.assignments, Some(tid));
+        id.put(&mut self.type_assignments, Some(tid));
         tid
     }
 
@@ -100,8 +100,8 @@ impl Types {
             (Type::ConstI32(x), Type::ConstI32(y)) => x == y,
             (Type::Struct, Type::Struct) => lhs == rhs,
             (Type::Tuple, Type::Tuple | Type::Struct) => {
-                let lhs_children = lhs.get(&self.children);
-                let rhs_children = rhs.get(&self.children);
+                let lhs_children = lhs.get(&self.type_children);
+                let rhs_children = rhs.get(&self.type_children);
                 if lhs_children.len() != rhs_children.len() {
                     return false;
                 }
@@ -116,18 +116,23 @@ impl Types {
                 if n1 != n2 {
                     return false;
                 }
-                self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
+                self.subtype(
+                    lhs.get(&self.type_children)[0],
+                    rhs.get(&self.type_children)[0],
+                )
             }
             (Type::Array(0), Type::Vector) => true,
-            (Type::Array(_), Type::Vector) => {
-                self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
-            }
-            (Type::Vector, Type::Vector) => {
-                self.subtype(lhs.get(&self.children)[0], rhs.get(&self.children)[0])
-            }
+            (Type::Array(_), Type::Vector) => self.subtype(
+                lhs.get(&self.type_children)[0],
+                rhs.get(&self.type_children)[0],
+            ),
+            (Type::Vector, Type::Vector) => self.subtype(
+                lhs.get(&self.type_children)[0],
+                rhs.get(&self.type_children)[0],
+            ),
             (Type::Func, Type::Func) => {
-                let lhs_children = lhs.get(&self.children);
-                let rhs_children = rhs.get(&self.children);
+                let lhs_children = lhs.get(&self.type_children);
+                let rhs_children = rhs.get(&self.type_children);
                 if !self.supertype(lhs_children[0], rhs_children[0]) {
                     return false;
                 }
@@ -137,7 +142,7 @@ impl Types {
                 true
             }
             (_, Type::Optional) => {
-                let rhs = rhs.get(&self.children)[0];
+                let rhs = rhs.get(&self.type_children)[0];
                 self.subtype(lhs, rhs)
             }
             _ => false,
@@ -172,35 +177,35 @@ impl Types {
             (Type::ConstI32(_) | Type::I32, Type::ConstI32(_) | Type::I32) => Type::I32,
             (Type::ConstBool(_) | Type::Bool, Type::ConstBool(_) | Type::Bool) => Type::Bool,
             (Type::Array(x), Type::Array(y)) => {
-                let lhs_child = lhs.get(&self.children)[0];
-                let rhs_child = lhs.get(&self.children)[0];
+                let lhs_child = lhs.get(&self.type_children)[0];
+                let rhs_child = lhs.get(&self.type_children)[0];
                 let child = self.union(lhs_child, rhs_child, errors);
-                tid.get_mut(&mut self.children).push(child);
+                tid.get_mut(&mut self.type_children).push(child);
                 if x == y { Type::Array(x) } else { Type::Vector }
             }
             (Type::Optional, Type::Optional) => {
-                let lhs_inner = lhs.get(&self.children)[0];
-                let rhs_inner = rhs.get(&self.children)[0];
+                let lhs_inner = lhs.get(&self.type_children)[0];
+                let rhs_inner = rhs.get(&self.type_children)[0];
                 let union = self.union(lhs_inner, rhs_inner, errors);
-                tid.get_mut(&mut self.children).push(union);
+                tid.get_mut(&mut self.type_children).push(union);
                 Type::Optional
             }
             (Type::Optional, Type::None) => {
-                let inner = lhs.get(&self.children)[0];
-                tid.get_mut(&mut self.children).push(inner);
+                let inner = lhs.get(&self.type_children)[0];
+                tid.get_mut(&mut self.type_children).push(inner);
                 Type::Optional
             }
             (Type::None, Type::Optional) => {
-                let inner = rhs.get(&self.children)[0];
-                tid.get_mut(&mut self.children).push(inner);
+                let inner = rhs.get(&self.type_children)[0];
+                tid.get_mut(&mut self.type_children).push(inner);
                 Type::Optional
             }
             (_, Type::None) => {
-                tid.get_mut(&mut self.children).push(lhs);
+                tid.get_mut(&mut self.type_children).push(lhs);
                 Type::Optional
             }
             (Type::None, _) => {
-                tid.get_mut(&mut self.children).push(rhs);
+                tid.get_mut(&mut self.type_children).push(rhs);
                 Type::Optional
             }
             _ => {
@@ -222,7 +227,7 @@ impl Types {
         errors: &mut Errors,
         id: AstId,
     ) -> TypeId {
-        let existing = *id.get(&self.assignments);
+        let existing = *id.get(&self.type_assignments);
         if let Some(existing) = existing
             && *existing.get(&self.types) != Type::Unknown
         {
@@ -232,7 +237,7 @@ impl Types {
         let kind = *id.get(&ast.kinds);
         match kind {
             AstKind::VIdent | AstKind::TIdent => {
-                let Some(def_id) = id.get(&symbols.definitions) else {
+                let Some(def_id) = id.get(&symbols.symbol_definitions) else {
                     return self.assign_new(id, Type::Weak);
                 };
                 let kind = def_id.get(&ast.kinds);
@@ -275,8 +280,8 @@ impl Types {
                 let (params_ty, result_ty) = match func_ty.get(&self.types) {
                     Type::Struct => (func_ty, func_ty),
                     Type::Func => (
-                        func_ty.get(&self.children)[0],
-                        func_ty.get(&self.children)[1],
+                        func_ty.get(&self.type_children)[0],
+                        func_ty.get(&self.type_children)[1],
                     ),
                     Type::Weak => {
                         return self.assign_new(id, Type::Weak);
@@ -289,8 +294,8 @@ impl Types {
                     }
                 };
 
-                let n_args = args_ty.get(&self.children).len();
-                let n_params = params_ty.get(&self.children).len();
+                let n_args = args_ty.get(&self.type_children).len();
+                let n_params = params_ty.get(&self.type_children).len();
                 if n_args < n_params {
                     errors
                         .log(
@@ -314,8 +319,8 @@ impl Types {
                 } else {
                     for i in 0..n_args {
                         let arg_id = args.get(&ast.children)[i];
-                        let arg_ty = args_ty.get(&self.children)[i];
-                        let param_ty = params_ty.get(&self.children)[i];
+                        let arg_ty = args_ty.get(&self.type_children)[i];
+                        let param_ty = params_ty.get(&self.type_children)[i];
 
                         if !self.subtype(arg_ty, param_ty) {
                             errors
@@ -335,7 +340,7 @@ impl Types {
                         {
                             let arg_name = arg_id.get(&ast.idents);
                             let struct_id = func
-                                .get(&symbols.definitions)
+                                .get(&symbols.symbol_definitions)
                                 .expect("struct should have definition")
                                 .get(&ast.children)[0];
                             let field_id = struct_id.get(&ast.children)[i];
@@ -351,7 +356,7 @@ impl Types {
                                     )
                                     .location_opt(*arg_id.get(&ast.locations));
                             }
-                            arg_id.put(&mut symbols.definitions, Some(field_id));
+                            arg_id.put(&mut symbols.symbol_definitions, Some(field_id));
                         }
                     }
                 }
@@ -368,10 +373,10 @@ impl Types {
                 let tid = self.assign_new(id, Type::Weak);
 
                 let args_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
-                tid.get_mut(&mut self.children).push(args_tid);
+                tid.get_mut(&mut self.type_children).push(args_tid);
 
                 let body_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
-                tid.get_mut(&mut self.children).push(body_tid);
+                tid.get_mut(&mut self.type_children).push(body_tid);
 
                 tid.put(&mut self.types, Type::Func);
 
@@ -407,7 +412,7 @@ impl Types {
                             unreachable!();
                         };
                         let index = *index as usize;
-                        let num_children = base_ty.get(&self.children).len();
+                        let num_children = base_ty.get(&self.type_children).len();
                         if num_children <= index {
                             errors
                                 .log(
@@ -420,7 +425,7 @@ impl Types {
                                 .location_opt(*field.get(&ast.locations));
                             return self.assign_new(id, Type::Weak);
                         }
-                        let tid = base_ty.get(&self.children)[index];
+                        let tid = base_ty.get(&self.type_children)[index];
                         self.assign(id, tid)
                     }
                     Type::Struct => {
@@ -432,15 +437,15 @@ impl Types {
                         }
                         let ident = field.get(&ast.idents);
                         let struct_id = base_ty
-                            .get(&self.definitions)
+                            .get(&self.type_definitions)
                             .expect("struct should have definition")
                             .get(&ast.children)[0];
                         for field_id in struct_id.get(&ast.children) {
                             if field_id.get(&ast.idents) == ident {
                                 let field_def_tid = field_id
-                                    .get(&self.assignments)
+                                    .get(&self.type_assignments)
                                     .expect("field should have type");
-                                field.put(&mut symbols.definitions, Some(*field_id));
+                                field.put(&mut symbols.symbol_definitions, Some(*field_id));
                                 return self.assign(id, field_def_tid);
                             }
                         }
@@ -481,7 +486,7 @@ impl Types {
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
                     let child_tid = self.compute(ast, symbols, errors, child);
-                    tid.get_mut(&mut self.children).push(child_tid);
+                    tid.get_mut(&mut self.type_children).push(child_tid);
                 }
                 tid
             }
@@ -490,7 +495,7 @@ impl Types {
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
                     let child_tid = self.compute(ast, symbols, errors, child);
-                    tid.get_mut(&mut self.children).push(child_tid);
+                    tid.get_mut(&mut self.type_children).push(child_tid);
                 }
                 tid
             }
@@ -509,11 +514,11 @@ impl Types {
                     }
                 }
                 if let Some(old_child_tid) = old_child_tid {
-                    tid.get_mut(&mut self.children).push(old_child_tid)
+                    tid.get_mut(&mut self.type_children).push(old_child_tid)
                 } else {
                     let child_tid = self.ids.alloc();
                     child_tid.put(&mut self.types, Type::Weak);
-                    tid.get_mut(&mut self.children).push(child_tid);
+                    tid.get_mut(&mut self.type_children).push(child_tid);
                 }
                 tid
             }
@@ -525,19 +530,19 @@ impl Types {
                 } else {
                     self.assign_new(id, Type::Vector)
                 };
-                tid.get_mut(&mut self.children).push(expr_tid);
+                tid.get_mut(&mut self.type_children).push(expr_tid);
                 tid
             }
             AstKind::Vector => {
                 let expr_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 let tid = self.assign_new(id, Type::Vector);
-                tid.get_mut(&mut self.children).push(expr_tid);
+                tid.get_mut(&mut self.type_children).push(expr_tid);
                 tid
             }
             AstKind::VField | AstKind::TField | AstKind::Bind | AstKind::BindMut => {
                 let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 if *id.get(&ast.children)[0].get(&ast.kinds) == AstKind::Struct {
-                    tid.put(&mut self.definitions, Some(id));
+                    tid.put(&mut self.type_definitions, Some(id));
                 }
                 self.assign(id, tid);
                 tid
@@ -549,7 +554,7 @@ impl Types {
             AstKind::Optional => {
                 let tid = self.assign_new(id, Type::Optional);
                 let child_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
-                tid.get_mut(&mut self.children).push(child_tid);
+                tid.get_mut(&mut self.type_children).push(child_tid);
                 tid
             }
             AstKind::Assign => {
@@ -623,7 +628,7 @@ impl Types {
                     let rhs_tid = self.compute(ast, symbols, errors, rhs);
                     let tid = match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
                         (Type::Weak, Type::Weak) => {
-                            rhs.put(&mut self.assignments, Some(lhs_tid));
+                            rhs.put(&mut self.type_assignments, Some(lhs_tid));
                             Type::Weak
                         }
                         (Type::Weak, Type::I32 | Type::ConstI32(_)) => {
@@ -731,7 +736,7 @@ impl Types {
             Type::Tuple => {
                 *buf += "(";
                 let mut first = true;
-                for child in tid.get(&self.children) {
+                for child in tid.get(&self.type_children) {
                     if !first {
                         *buf += ", ";
                     }
@@ -742,7 +747,7 @@ impl Types {
             }
             Type::Struct => {
                 let def_id = tid
-                    .get(&self.definitions)
+                    .get(&self.type_definitions)
                     .expect("struct must have type definition");
                 // TODO: expand should be an identifier (not a bool)
                 // TODO: is this even the right approach?
@@ -752,7 +757,7 @@ impl Types {
                     let mut first = true;
                     let struct_id = def_id.get(&ast.children)[0];
                     for (child, child_id) in tid
-                        .get(&self.children)
+                        .get(&self.type_children)
                         .iter()
                         .zip(struct_id.get(&ast.children).iter())
                     {
@@ -770,28 +775,28 @@ impl Types {
                 }
             }
             Type::Func => {
-                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
+                self.write_type_into(tid.get(&self.type_children)[0], false, ast, buf);
                 *buf += " ";
-                self.write_type_into(tid.get(&self.children)[1], false, ast, buf);
+                self.write_type_into(tid.get(&self.type_children)[1], false, ast, buf);
             }
             Type::Vector => {
                 *buf += "[]";
-                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
+                self.write_type_into(tid.get(&self.type_children)[0], false, ast, buf);
             }
             Type::Array(0) => {
                 *buf += "[]";
             }
             Type::Array(n) => {
                 *buf += &format!("[{n}]");
-                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
+                self.write_type_into(tid.get(&self.type_children)[0], false, ast, buf);
             }
             Type::Optional => {
-                self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
+                self.write_type_into(tid.get(&self.type_children)[0], false, ast, buf);
                 *buf += "?";
             }
             Type::Union => {
                 let mut first = true;
-                for child in tid.get(&self.children) {
+                for child in tid.get(&self.type_children) {
                     if !first {
                         *buf += "|";
                     }
@@ -817,7 +822,7 @@ impl Types {
             if qualified.is_empty() {
                 continue;
             }
-            let tid = id.get(&self.assignments);
+            let tid = id.get(&self.type_assignments);
             if let Some(tid) = tid {
                 print!(
                     "{qualified}{}",
