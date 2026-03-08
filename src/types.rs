@@ -232,13 +232,13 @@ impl Types {
 
         let kind = *id.get(&ast.kinds);
         match kind {
-            AstKind::LIdent | AstKind::UIdent => {
+            AstKind::VIdent | AstKind::TIdent => {
                 let Some(def_id) = id.get(&symbols.definitions) else {
                     return self.assign_new(id, Type::Weak);
                 };
                 let kind = def_id.get(&ast.kinds);
                 match kind {
-                    AstKind::Bind | AstKind::Field => {
+                    AstKind::Bind | AstKind::VField | AstKind::TField => {
                         let tid = self.compute(ast, symbols, errors, *def_id);
                         self.assign(id, tid)
                     }
@@ -331,7 +331,7 @@ impl Types {
                                 .location_opt(*arg_id.get(&ast.locations));
                         }
 
-                        if *arg_id.get(&ast.kinds) == AstKind::Arg
+                        if matches!(arg_id.get(&ast.kinds), AstKind::VArg | AstKind::TArg)
                             && *func_ty.get(&self.types) == Type::Struct
                         {
                             let arg_name = arg_id.get(&ast.idents);
@@ -425,7 +425,7 @@ impl Types {
                         self.assign(id, tid)
                     }
                     Type::Struct => {
-                        if !matches!(field.get(&ast.kinds), AstKind::LIdent | AstKind::UIdent) {
+                        if !matches!(field.get(&ast.kinds), AstKind::VIdent | AstKind::TIdent) {
                             errors
                                 .log(ErrorKind::Type, "Struct field name must be an identifier")
                                 .location_opt(*id.get(&ast.locations));
@@ -534,13 +534,13 @@ impl Types {
                 tid.get_mut(&mut self.children).push(expr_tid);
                 tid
             }
-            AstKind::Field | AstKind::Bind | AstKind::BindMut => {
+            AstKind::VField | AstKind::TField | AstKind::Bind | AstKind::BindMut => {
                 let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 tid.put(&mut self.definitions, Some(id));
                 self.assign(id, tid);
                 tid
             }
-            AstKind::Arg => {
+            AstKind::VArg | AstKind::TArg => {
                 let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 self.assign(id, tid)
             }
@@ -572,7 +572,8 @@ impl Types {
                 let cond_tid = self.compute(ast, symbols, errors, cond);
                 self.compute(ast, symbols, errors, body);
                 match cond_tid.get(&self.types) {
-                    Type::Bool => {}
+                    Type::Weak | Type::Unknown => {}
+                    Type::Bool | Type::ConstBool(_) => {}
                     Type::Optional => {
                         // TODO: handle shadowed re-typing
                     }
@@ -595,7 +596,8 @@ impl Types {
                 let body_tid = self.compute(ast, symbols, errors, body);
                 let else_body_tid = self.compute(ast, symbols, errors, else_body);
                 match cond_tid.get(&self.types) {
-                    Type::Bool => {}
+                    Type::Weak | Type::Unknown => {}
+                    Type::Bool | Type::ConstBool(_) => {}
                     Type::Optional => {
                         // TODO: handle shadowed re-typing
                     }
@@ -678,12 +680,27 @@ impl Types {
                 | InfixKind::Le
                 | InfixKind::Eq
                 | InfixKind::Ne => {
-                    // TODO: actually check
-                    // let lhs = id.get(&ast.children)[0];
-                    // let rhs = id.get(&ast.children)[1];
-                    // let lhs_tid = self.compute(ast, errors, lhs);
-                    // let rhs_tid = self.compute(ast, errors, rhs);
-                    self.assign_new(id, Type::Bool)
+                    let lhs = id.get(&ast.children)[0];
+                    let rhs = id.get(&ast.children)[1];
+                    let lhs_tid = self.compute(ast, symbols, errors, lhs);
+                    let rhs_tid = self.compute(ast, symbols, errors, rhs);
+                    // TODO: type weakening + check
+                    if let Type::ConstBool(lhs) = lhs_tid.get(&self.types)
+                        && let Type::ConstBool(rhs) = rhs_tid.get(&self.types)
+                    {
+                        let result = match kind {
+                            InfixKind::Gt => lhs > rhs,
+                            InfixKind::Lt => lhs < rhs,
+                            InfixKind::Ge => lhs >= rhs,
+                            InfixKind::Le => lhs <= rhs,
+                            InfixKind::Eq => lhs == rhs,
+                            InfixKind::Ne => lhs != rhs,
+                            _ => unreachable!(),
+                        };
+                        self.assign_new(id, Type::ConstBool(result))
+                    } else {
+                        self.assign_new(id, Type::Bool)
+                    }
                 }
             },
             AstKind::Error => self.assign_new(id, Type::Weak),

@@ -213,7 +213,7 @@ impl<'a> Parser<'a> {
                             .log(ErrorKind::Parse, format!("failed to parse integer: {e}"));
                     }
                 },
-                AstKind::LIdent | AstKind::UIdent => {
+                AstKind::VIdent | AstKind::TIdent => {
                     id.put(&mut self.ast.idents, slice.to_owned());
                 }
                 AstKind::String => {
@@ -267,7 +267,22 @@ impl<'a> Parser<'a> {
 
     fn parse_field(&mut self) -> AstId {
         let id = self.parse_ident();
-        id.put(&mut self.ast.kinds, AstKind::Field);
+        let field_kind = match id.get(&self.ast.kinds) {
+            AstKind::VIdent => AstKind::VField,
+            AstKind::TIdent => AstKind::TField,
+            AstKind::Void => {
+                self.error_at(
+                    *id.get(&self.ast.locations),
+                    "Field identifier cannot be void",
+                );
+                AstKind::VField
+            }
+            _ => {
+                self.error_at(*id.get(&self.ast.locations), "Expected field identifier");
+                AstKind::VField
+            }
+        };
+        id.put(&mut self.ast.kinds, field_kind);
         let expr = self.parse_expr();
         self.push_child(id, expr);
         id
@@ -276,8 +291,8 @@ impl<'a> Parser<'a> {
     fn parse_ident(&mut self) -> AstId {
         let id = match self.cur() {
             Underscore => self.node(AstKind::Void),
-            LIdent => self.node(AstKind::LIdent),
-            UIdent => self.node(AstKind::UIdent),
+            LIdent => self.node(AstKind::VIdent),
+            UIdent => self.node(AstKind::TIdent),
             _ => {
                 self.error("Expected identifier");
                 self.node(AstKind::Error)
@@ -293,8 +308,8 @@ impl<'a> Parser<'a> {
     fn parse_proj_name(&mut self) -> AstId {
         let id = match self.cur() {
             Underscore => self.node(AstKind::Void),
-            LIdent => self.node(AstKind::LIdent),
-            UIdent => self.node(AstKind::UIdent),
+            LIdent => self.node(AstKind::VIdent),
+            UIdent => self.node(AstKind::TIdent),
             Integer => self.node(AstKind::Integer),
             _ => {
                 self.error("Expected identifier");
@@ -311,7 +326,19 @@ impl<'a> Parser<'a> {
     fn parse_arg(&mut self) -> AstId {
         if self.matches_ahead(&[TokenKind::Equals], 1) {
             let id = self.parse_ident();
-            id.put(&mut self.ast.kinds, AstKind::Arg);
+            let arg_kind = match id.get(&self.ast.kinds) {
+                AstKind::VIdent => AstKind::VArg,
+                AstKind::TIdent => AstKind::TArg,
+                AstKind::Void => {
+                    self.error_at(*id.get(&self.ast.locations), "Argument cannot be void");
+                    AstKind::VArg
+                }
+                _ => {
+                    self.error_at(*id.get(&self.ast.locations), "Expected argument identifier");
+                    AstKind::VArg
+                }
+            };
+            id.put(&mut self.ast.kinds, arg_kind);
             self.eat();
             let expr = self.parse_expr();
             self.push_child(id, expr);
@@ -331,10 +358,15 @@ impl<'a> Parser<'a> {
             };
 
             if kind == AstKind::Bind {
-                assert!(matches!(
+                if !matches!(
                     lhs.get(&self.ast.kinds),
-                    AstKind::LIdent | AstKind::UIdent | AstKind::Void
-                ));
+                    AstKind::VIdent | AstKind::TIdent | AstKind::Void
+                ) {
+                    self.error_at(
+                        *lhs.get(&self.ast.locations),
+                        "Left-hand-side of bind must be an identifier",
+                    );
+                }
                 lhs.put(&mut self.ast.kinds, AstKind::Bind);
                 let rhs = self.parse_expr();
                 self.push_child(lhs, rhs);
@@ -508,8 +540,8 @@ impl<'a> Parser<'a> {
             String => AstKind::String,
             Char => AstKind::Char,
             Underscore => AstKind::None,
-            LIdent => AstKind::LIdent,
-            UIdent => AstKind::UIdent,
+            LIdent => AstKind::VIdent,
+            UIdent => AstKind::TIdent,
             _ => {
                 self.error("Expected expression");
                 AstKind::Error
@@ -638,7 +670,14 @@ impl Ast {
                 helper(*child, locations, children, kinds);
 
                 // Certain AST nodes don't conform to the child-merge rule for locations
-                if !matches!(id.get(kinds), AstKind::Field | AstKind::Bind | AstKind::Arg) {
+                if !matches!(
+                    id.get(kinds),
+                    AstKind::VField
+                        | AstKind::TField
+                        | AstKind::Bind
+                        | AstKind::VArg
+                        | AstKind::TArg
+                ) {
                     location = Location::merge(&location, child.get(locations));
                 }
             }

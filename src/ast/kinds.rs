@@ -2,8 +2,8 @@ use crate::lexer::TokenKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum AstKind {
-    LIdent,
-    UIdent,
+    VIdent,
+    TIdent,
     Void,
     String,
     Char,
@@ -22,8 +22,10 @@ pub enum AstKind {
     Array,
     Repeat,
     Vector,
-    Field,
-    Arg,
+    VField,
+    TField,
+    VArg,
+    TArg,
     Optional,
     Bind,
     BindMut,

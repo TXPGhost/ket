@@ -92,10 +92,29 @@ fn find_ident(position: Position, ast: &Ast) -> Option<AstId> {
 
 static TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = LazyLock::new(|| {
     vec![
+        SemanticTokenType::NAMESPACE,
         SemanticTokenType::TYPE,
+        SemanticTokenType::CLASS,
+        SemanticTokenType::ENUM,
+        SemanticTokenType::INTERFACE,
+        SemanticTokenType::STRUCT,
+        SemanticTokenType::TYPE_PARAMETER,
+        SemanticTokenType::PARAMETER,
         SemanticTokenType::VARIABLE,
+        SemanticTokenType::PROPERTY,
+        SemanticTokenType::ENUM_MEMBER,
+        SemanticTokenType::EVENT,
+        SemanticTokenType::FUNCTION,
+        SemanticTokenType::METHOD,
+        SemanticTokenType::MACRO,
+        SemanticTokenType::KEYWORD,
+        SemanticTokenType::MODIFIER,
+        SemanticTokenType::COMMENT,
         SemanticTokenType::STRING,
         SemanticTokenType::NUMBER,
+        SemanticTokenType::REGEXP,
+        SemanticTokenType::OPERATOR,
+        SemanticTokenType::DECORATOR,
     ]
 });
 static TOKEN_MAP: LazyLock<HashMap<SemanticTokenType, u32>> = LazyLock::new(|| {
@@ -177,9 +196,10 @@ impl LanguageServer for Backend {
         };
         let Some(tid) = hovered_id.get(&types.assignments) else {
             return Ok(Some(Hover {
-                contents: HoverContents::Scalar(MarkedString::String(String::from(
-                    "internal error: no type assignment",
-                ))),
+                contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
+                    language: String::from("ket"),
+                    value: String::from("internal error: no type assignment"),
+                })),
                 range: None,
             }));
         };
@@ -194,7 +214,7 @@ impl LanguageServer for Backend {
                 expand = true;
             }
             format!(
-                "`{} {}`",
+                "{} {}",
                 &ident[1.min(ident.len())..],
                 types.string_of_type(*tid, expand, &ast)
             )
@@ -202,7 +222,10 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(Some(Hover {
-            contents: HoverContents::Scalar(MarkedString::String(msg)),
+            contents: HoverContents::Scalar(MarkedString::LanguageString(LanguageString {
+                language: String::from("ket"),
+                value: msg,
+            })),
             range: None,
         }))
     }
@@ -274,16 +297,16 @@ impl LanguageServer for Backend {
         let mut prev_char = 0;
         for (id, location) in ids {
             let kind = *match id.get(&ast.kinds) {
-                AstKind::LIdent => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
-                AstKind::UIdent => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::VIdent => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::TIdent => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
                 AstKind::Void => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 AstKind::String => TOKEN_MAP.get(&SemanticTokenType::STRING).unwrap(),
                 AstKind::Char => TOKEN_MAP.get(&SemanticTokenType::STRING).unwrap(),
                 AstKind::None => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
                 AstKind::Integer => TOKEN_MAP.get(&SemanticTokenType::NUMBER).unwrap(),
                 AstKind::Float => TOKEN_MAP.get(&SemanticTokenType::NUMBER).unwrap(),
-                // AstKind::Call => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
-                // AstKind::Method => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Call => TOKEN_MAP.get(&SemanticTokenType::FUNCTION).unwrap(),
+                // AstKind::Method => TOKEN_MAP.get(&SemanticTokenType::FUNCTION).unwrap(),
                 // AstKind::Group => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::Func => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::Block => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
@@ -294,9 +317,10 @@ impl LanguageServer for Backend {
                 // AstKind::Array => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::Repeat => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::Vector => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
-                AstKind::Field => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
-                AstKind::Arg => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
-                // AstKind::Optional => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::VField => TOKEN_MAP.get(&SemanticTokenType::PROPERTY).unwrap(),
+                AstKind::TField => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::VArg => TOKEN_MAP.get(&SemanticTokenType::PROPERTY).unwrap(),
+                AstKind::TArg => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
                 AstKind::Bind => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::BindMut => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::Assign => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),

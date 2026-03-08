@@ -80,13 +80,13 @@ impl Resolver<'_> {
     pub fn qualify_idents(&mut self, id: AstId, path: &str) {
         let kind = id.get(&self.ast.kinds);
         match kind {
-            AstKind::Field => {
+            AstKind::VField | AstKind::TField => {
                 let ident = id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
                 self.qualify_and_define_self(id, &path);
                 self.qualify_idents(id.get(&self.ast.children)[0], &path);
             }
-            AstKind::Arg => {
+            AstKind::VArg | AstKind::TArg => {
                 self.qualify_idents(id.get(&self.ast.children)[0], path);
             }
             AstKind::Bind => {
@@ -98,7 +98,7 @@ impl Resolver<'_> {
             AstKind::Proj => {
                 self.qualify_idents(id.get(&self.ast.children)[0], path);
             }
-            AstKind::LIdent | AstKind::UIdent => {
+            AstKind::VIdent | AstKind::TIdent => {
                 let ident = id.get(&self.ast.idents);
                 let path = format!("{path}.{ident}");
                 self.qualify_only(id, &path);
@@ -126,7 +126,7 @@ impl Resolver<'_> {
         println!("map is {:?}", self.definitions_map);
         for id in self.undefined_ids.iter() {
             // Try to resolve identifiers to their fully qualified names
-            if matches!(id.get(&self.ast.kinds), AstKind::LIdent | AstKind::UIdent) {
+            if matches!(id.get(&self.ast.kinds), AstKind::VIdent | AstKind::TIdent) {
                 let mut ident = id.get(&self.symbols.qualified_idents).to_owned();
                 assert!(
                     !ident.is_empty(),

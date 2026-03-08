@@ -1,3 +1,5 @@
+cond true
+
 a ?(cond) 42 : 69
 b ?(cond) 42 : 69
 c ?(cond) 42 : 69
