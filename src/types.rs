@@ -236,17 +236,46 @@ impl Types {
                     }
                 };
 
-                if !self.subtype(args_ty, params_ty) {
+                let n_args = args_ty.get(&self.children).len();
+                let n_params = params_ty.get(&self.children).len();
+                if n_args < n_params {
                     errors
                         .log(
                             ErrorKind::Type,
                             format!(
-                                "Argument type mismatch: expected {} but found {}",
-                                self.string_of_type(params_ty, false, ast),
-                                self.string_of_type(args_ty, false, ast),
+                                "Not enough arguments: expected {} arguments but found {}",
+                                n_params, n_args
                             ),
                         )
                         .location_opt(*args.get(&ast.locations));
+                } else if n_args > n_params {
+                    errors
+                        .log(
+                            ErrorKind::Type,
+                            format!(
+                                "Too many arguments: expected {} arguments but found {}",
+                                n_params, n_args
+                            ),
+                        )
+                        .location_opt(*args.get(&ast.locations));
+                } else {
+                    for i in 0..n_args {
+                        let arg_ty = args_ty.get(&self.children)[i];
+                        let param_ty = params_ty.get(&self.children)[i];
+
+                        if !self.subtype(arg_ty, param_ty) {
+                            errors
+                                .log(
+                                    ErrorKind::Type,
+                                    format!(
+                                        "Argument type mismatch: expected {} but found {}",
+                                        self.string_of_type(param_ty, false, ast),
+                                        self.string_of_type(arg_ty, false, ast),
+                                    ),
+                                )
+                                .location_opt(*args.get(&ast.children)[i].get(&ast.locations));
+                        }
+                    }
                 }
                 self.assign(id, result_ty)
             }
@@ -625,6 +654,9 @@ impl Types {
             Type::Vector => {
                 *buf += "[]";
                 self.write_type_into(tid.get(&self.children)[0], false, ast, buf);
+            }
+            Type::Array(0) => {
+                *buf += "[]";
             }
             Type::Array(n) => {
                 *buf += &format!("[{n}]");
