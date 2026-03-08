@@ -17,9 +17,6 @@ devices [
   )
 ]
 
-true _
-Bool true
-
 Device (
   config DeviceConfig
   variables []Variable

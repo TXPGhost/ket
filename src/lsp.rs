@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 
 use tower_lsp_server::jsonrpc::Result;
+use tower_lsp_server::ls_types::request::*;
 use tower_lsp_server::ls_types::*;
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
@@ -158,6 +159,7 @@ impl LanguageServer for Backend {
                     ),
                 ),
                 definition_provider: Some(OneOf::Left(true)),
+                type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
@@ -205,8 +207,6 @@ impl LanguageServer for Backend {
             }));
         };
 
-        let ident = hovered_id.get(&symbols.qualified_idents);
-
         let msg = if let Some(hovered_def_id) = hovered_id.get(&symbols.definitions) {
             let mut expand = false;
             if hovered_def_id.get(&symbols.qualified_idents)
@@ -214,11 +214,7 @@ impl LanguageServer for Backend {
             {
                 expand = true;
             }
-            format!(
-                "{} {}",
-                &ident[1.min(ident.len())..],
-                types.string_of_type(*tid, expand, &ast)
-            )
+            types.string_of_type(*tid, expand, &ast)
         } else {
             return Ok(None);
         };
@@ -254,7 +250,6 @@ impl LanguageServer for Backend {
         let Some(id) = find_ident(params.text_document_position_params.position, &ast) else {
             return Ok(None);
         };
-
         let Some(definition) = id.get(&symbols.definitions) else {
             return Ok(None);
         };
@@ -262,6 +257,40 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         Ok(Some(GotoDefinitionResponse::Scalar(Location {
+            uri: params.text_document_position_params.text_document.uri,
+            range: Range {
+                start: Position {
+                    line: loc.line_start - 1,
+                    character: loc.char_start - 1,
+                },
+                end: Position {
+                    line: loc.line_end - 1,
+                    character: loc.char_end - 1,
+                },
+            },
+        })))
+    }
+
+    async fn goto_type_definition(
+        &self,
+        params: GotoTypeDefinitionParams,
+    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        let ast = self.state.ast.lock().await;
+        let types = self.state.types.lock().await;
+
+        let Some(id) = find_ident(params.text_document_position_params.position, &ast) else {
+            return Ok(None);
+        };
+        let Some(tid) = id.get(&types.assignments) else {
+            return Ok(None);
+        };
+        let Some(def_id) = tid.get(&types.definitions) else {
+            return Ok(None);
+        };
+        let Some(loc) = def_id.get(&ast.locations) else {
+            return Ok(None);
+        };
+        Ok(Some(GotoTypeDefinitionResponse::Scalar(Location {
             uri: params.text_document_position_params.text_document.uri,
             range: Range {
                 start: Position {
@@ -328,13 +357,13 @@ impl LanguageServer for Backend {
                 // AstKind::If => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::IfElse => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 // AstKind::Infix(infix_kind) => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
-                AstKind::PrimitiveI32 => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
-                AstKind::PrimitiveF32 => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
-                AstKind::PrimitiveString => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
-                AstKind::PrimitiveChar => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
-                AstKind::PrimitiveBool => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
-                AstKind::PrimitiveTrue => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
-                AstKind::PrimitiveFalse => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinI32 => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinF32 => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinString => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinChar => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinBool => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinTrue => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::BuiltinFalse => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
                 // AstKind::Error => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 _ => continue,
             };

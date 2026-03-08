@@ -6,6 +6,8 @@ World (
   particles []Particle
   rockets []Rocket
   emitters []Emitter?
+
+  sock Socket
 )
 
 init_world() {
@@ -31,6 +33,7 @@ main() {
   }
 
   weird = Bool?
+  z = print(my_sock)
 
   ?(weird) {
     x1 = weird

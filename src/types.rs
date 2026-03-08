@@ -222,7 +222,6 @@ impl Types {
         errors: &mut Errors,
         id: AstId,
     ) -> TypeId {
-        println!("computing types for \"{}\"", id.get(&ast.idents));
         let existing = *id.get(&self.assignments);
         if let Some(existing) = existing
             && *existing.get(&self.types) != Type::Unknown
@@ -242,13 +241,13 @@ impl Types {
                         let tid = self.compute(ast, symbols, errors, *def_id);
                         self.assign(id, tid)
                     }
-                    AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
-                    AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
-                    AstKind::PrimitiveString => self.assign_new(id, Type::String),
-                    AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
-                    AstKind::PrimitiveBool => self.assign_new(id, Type::Bool),
-                    AstKind::PrimitiveTrue => self.assign_new(id, Type::ConstBool(true)),
-                    AstKind::PrimitiveFalse => self.assign_new(id, Type::ConstBool(false)),
+                    AstKind::BuiltinI32 => self.assign_new(id, Type::I32),
+                    AstKind::BuiltinF32 => self.assign_new(id, Type::F32),
+                    AstKind::BuiltinString => self.assign_new(id, Type::String),
+                    AstKind::BuiltinChar => self.assign_new(id, Type::Char),
+                    AstKind::BuiltinBool => self.assign_new(id, Type::Bool),
+                    AstKind::BuiltinTrue => self.assign_new(id, Type::ConstBool(true)),
+                    AstKind::BuiltinFalse => self.assign_new(id, Type::ConstBool(false)),
                     _ => unreachable!(
                         "unreachable non-definition type {kind:?} for symbol \"{}\"",
                         def_id.get(&ast.idents)
@@ -536,7 +535,9 @@ impl Types {
             }
             AstKind::VField | AstKind::TField | AstKind::Bind | AstKind::BindMut => {
                 let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
-                tid.put(&mut self.definitions, Some(id));
+                if *id.get(&ast.children)[0].get(&ast.kinds) == AstKind::Struct {
+                    tid.put(&mut self.definitions, Some(id));
+                }
                 self.assign(id, tid);
                 tid
             }
@@ -704,13 +705,13 @@ impl Types {
                 }
             },
             AstKind::Error => self.assign_new(id, Type::Weak),
-            AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
-            AstKind::PrimitiveF32 => self.assign_new(id, Type::F32),
-            AstKind::PrimitiveString => self.assign_new(id, Type::String),
-            AstKind::PrimitiveChar => self.assign_new(id, Type::Char),
-            AstKind::PrimitiveBool => self.assign_new(id, Type::Bool),
-            AstKind::PrimitiveTrue => self.assign_new(id, Type::ConstBool(true)),
-            AstKind::PrimitiveFalse => self.assign_new(id, Type::ConstBool(false)),
+            AstKind::BuiltinI32 => self.assign_new(id, Type::I32),
+            AstKind::BuiltinF32 => self.assign_new(id, Type::F32),
+            AstKind::BuiltinString => self.assign_new(id, Type::String),
+            AstKind::BuiltinChar => self.assign_new(id, Type::Char),
+            AstKind::BuiltinBool => self.assign_new(id, Type::Bool),
+            AstKind::BuiltinTrue => self.assign_new(id, Type::ConstBool(true)),
+            AstKind::BuiltinFalse => self.assign_new(id, Type::ConstBool(false)),
         }
     }
 
@@ -797,8 +798,8 @@ impl Types {
                     self.write_type_into(*child, false, ast, buf);
                 }
             }
-            Type::Unknown => *buf += "Unknown",
-            Type::Weak => *buf += &format!("__Weak{}", tid.index()),
+            Type::Unknown => *buf += "Unassigned",
+            Type::Weak => *buf += "Unknown",
         }
     }
 

@@ -22,13 +22,13 @@ impl Prelude for StandardPrelude {
             resolver.definitions_map.insert(format!(".{s}"), id);
         };
 
-        add_primitive("I32", AstKind::PrimitiveI32);
-        add_primitive("F32", AstKind::PrimitiveF32);
-        add_primitive("String", AstKind::PrimitiveString);
-        add_primitive("Char", AstKind::PrimitiveChar);
-        add_primitive("Bool", AstKind::PrimitiveBool);
-        add_primitive("true", AstKind::PrimitiveTrue);
-        add_primitive("false", AstKind::PrimitiveFalse);
+        add_primitive("I32", AstKind::BuiltinI32);
+        add_primitive("F32", AstKind::BuiltinF32);
+        add_primitive("String", AstKind::BuiltinString);
+        add_primitive("Char", AstKind::BuiltinChar);
+        add_primitive("Bool", AstKind::BuiltinBool);
+        add_primitive("true", AstKind::BuiltinTrue);
+        add_primitive("false", AstKind::BuiltinFalse);
     }
 }
 
