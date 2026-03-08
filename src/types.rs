@@ -4,6 +4,7 @@ use crate::{
     arena::{Arena, Id, World},
     ast::{Ast, AstId, AstKind, InfixKind, Literal},
     error::{ErrorKind, Errors},
+    symb::Symbols,
 };
 
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -62,9 +63,9 @@ pub struct Types {
 pub type TypeId = Id<Types>;
 
 impl Types {
-    pub fn compute_types(&mut self, ast: &mut Ast, errors: &mut Errors) {
+    pub fn compute_types(&mut self, ast: &Ast, symbols: &mut Symbols, errors: &mut Errors) {
         for id in ast.ids.clone().iter() {
-            self.compute(ast, errors, id);
+            self.compute(ast, symbols, errors, id);
         }
     }
 
@@ -174,7 +175,13 @@ impl Types {
         tid
     }
 
-    fn compute(&mut self, ast: &mut Ast, errors: &mut Errors, id: AstId) -> TypeId {
+    fn compute(
+        &mut self,
+        ast: &Ast,
+        symbols: &mut Symbols,
+        errors: &mut Errors,
+        id: AstId,
+    ) -> TypeId {
         let existing = *id.get(&self.assignments);
         if let Some(existing) = existing
             && *existing.get(&self.types) != Type::Unknown
@@ -185,13 +192,13 @@ impl Types {
         let kind = *id.get(&ast.kinds);
         match kind {
             AstKind::LIdent | AstKind::UIdent => {
-                let Some(def_id) = id.get(&ast.definitions) else {
+                let Some(def_id) = id.get(&symbols.definitions) else {
                     return self.assign_new(id, Type::Unknown);
                 };
                 let kind = def_id.get(&ast.kinds);
                 match kind {
                     AstKind::Bind | AstKind::Field => {
-                        let tid = self.compute(ast, errors, def_id.get(&ast.children)[1]);
+                        let tid = self.compute(ast, symbols, errors, def_id.get(&ast.children)[1]);
                         self.assign(id, tid)
                     }
                     AstKind::PrimitiveI32 => self.assign_new(id, Type::I32),
@@ -216,8 +223,8 @@ impl Types {
             AstKind::Call => {
                 let func = id.get(&ast.children)[0];
                 let args = id.get(&ast.children)[1];
-                let func_ty = self.compute(ast, errors, func);
-                let args_ty = self.compute(ast, errors, args);
+                let func_ty = self.compute(ast, symbols, errors, func);
+                let args_ty = self.compute(ast, symbols, errors, args);
 
                 let (params_ty, result_ty) = match func_ty.get(&self.types) {
                     Type::Struct => (func_ty, func_ty),
@@ -289,10 +296,10 @@ impl Types {
             AstKind::Func => {
                 let tid = self.assign_new(id, Type::Unknown);
 
-                let args_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
+                let args_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 tid.get_mut(&mut self.children).push(args_tid);
 
-                let body_tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                let body_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
                 tid.get_mut(&mut self.children).push(body_tid);
 
                 tid.put(&mut self.types, Type::Func);
@@ -303,7 +310,7 @@ impl Types {
                 let mut last_child_tid = None;
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
-                    last_child_tid = Some(self.compute(ast, errors, child));
+                    last_child_tid = Some(self.compute(ast, symbols, errors, child));
                 }
                 if let Some(last_child_tid) = last_child_tid {
                     self.assign(id, last_child_tid)
@@ -315,7 +322,7 @@ impl Types {
                 let base = id.get(&ast.children)[0];
                 let field = id.get(&ast.children)[1];
 
-                let base_ty = self.compute(ast, errors, base);
+                let base_ty = self.compute(ast, symbols, errors, base);
 
                 match base_ty.get(&self.types) {
                     Type::Tuple => {
@@ -363,7 +370,7 @@ impl Types {
                             .zip(struct_data.child_field_ids.iter())
                         {
                             if field_id.get(&ast.children)[0].get(&ast.idents) == ident {
-                                field.put(&mut ast.definitions, Some(*field_id));
+                                field.put(&mut symbols.definitions, Some(*field_id));
                                 return self.assign(id, *field_tid);
                             }
                         }
@@ -400,7 +407,7 @@ impl Types {
                 let tid = self.assign_new(id, Type::Tuple);
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
-                    let child_tid = self.compute(ast, errors, child);
+                    let child_tid = self.compute(ast, symbols, errors, child);
                     tid.get_mut(&mut self.children).push(child_tid);
                 }
                 tid
@@ -410,7 +417,7 @@ impl Types {
                 let mut struct_data = StructData::default();
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
-                    let child_tid = self.compute(ast, errors, child);
+                    let child_tid = self.compute(ast, symbols, errors, child);
                     tid.get_mut(&mut self.children).push(child_tid);
                     struct_data.child_field_ids.push(child);
                 }
@@ -424,7 +431,7 @@ impl Types {
                 let mut old_child_tid = None;
                 for i in 0..id.get(&ast.children).len() {
                     let child = id.get(&ast.children)[i];
-                    let child_tid = self.compute(ast, errors, child);
+                    let child_tid = self.compute(ast, symbols, errors, child);
                     if let Some(old_child_tid) = &mut old_child_tid {
                         *old_child_tid = self.union(*old_child_tid, child_tid);
                     } else {
@@ -441,8 +448,8 @@ impl Types {
                 tid
             }
             AstKind::Repeat => {
-                let len_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
-                let expr_tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                let len_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
+                let expr_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
                 let tid = if let Type::ConstI32(n) = *len_tid.get(&self.types) {
                     self.assign_new(id, Type::Array(n as usize))
                 } else {
@@ -452,13 +459,13 @@ impl Types {
                 tid
             }
             AstKind::Vector => {
-                let expr_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
+                let expr_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 let tid = self.assign_new(id, Type::Vector);
                 tid.get_mut(&mut self.children).push(expr_tid);
                 tid
             }
             AstKind::Field => {
-                let tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
                 if *id.get(&ast.children)[1].get(&ast.kinds) == AstKind::Struct {
                     tid.get_mut(&mut self.struct_data)
                         .as_mut()
@@ -469,12 +476,12 @@ impl Types {
                 tid
             }
             AstKind::Arg => {
-                let tid = self.compute(ast, errors, id.get(&ast.children)[1]);
+                let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[1]);
                 self.assign(id, tid)
             }
             AstKind::Optional => {
                 let tid = self.assign_new(id, Type::Optional);
-                let child_tid = self.compute(ast, errors, id.get(&ast.children)[0]);
+                let child_tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 tid.get_mut(&mut self.children).push(child_tid);
                 tid
             }
@@ -482,8 +489,8 @@ impl Types {
             AstKind::Assign => {
                 let lhs = id.get(&ast.children)[0];
                 let rhs = id.get(&ast.children)[0];
-                let lhs_ty = self.compute(ast, errors, lhs);
-                let rhs_ty = self.compute(ast, errors, rhs);
+                let lhs_ty = self.compute(ast, symbols, errors, lhs);
+                let rhs_ty = self.compute(ast, symbols, errors, rhs);
 
                 if !self.subtype(lhs_ty, rhs_ty) {
                     errors
@@ -498,8 +505,8 @@ impl Types {
             AstKind::If => {
                 let cond = id.get(&ast.children)[0];
                 let body = id.get(&ast.children)[1];
-                let cond_tid = self.compute(ast, errors, cond);
-                self.compute(ast, errors, body);
+                let cond_tid = self.compute(ast, symbols, errors, cond);
+                self.compute(ast, symbols, errors, body);
                 if *cond_tid.get(&self.types) != Type::Bool {
                     errors
                         .log(ErrorKind::Type, "If condition must be of type Bool")
@@ -511,9 +518,9 @@ impl Types {
                 let cond = id.get(&ast.children)[0];
                 let body = id.get(&ast.children)[1];
                 let else_body = id.get(&ast.children)[2];
-                let cond_tid = self.compute(ast, errors, cond);
-                let body_tid = self.compute(ast, errors, body);
-                let else_body_tid = self.compute(ast, errors, else_body);
+                let cond_tid = self.compute(ast, symbols, errors, cond);
+                let body_tid = self.compute(ast, symbols, errors, body);
+                let else_body_tid = self.compute(ast, symbols, errors, else_body);
                 if *cond_tid.get(&self.types) != Type::Bool {
                     errors
                         .log(ErrorKind::Type, "If condition must be of type Bool")
@@ -526,8 +533,8 @@ impl Types {
                 InfixKind::Add | InfixKind::Sub | InfixKind::Mul | InfixKind::Div => {
                     let lhs = id.get(&ast.children)[0];
                     let rhs = id.get(&ast.children)[1];
-                    let lhs_tid = self.compute(ast, errors, lhs);
-                    let rhs_tid = self.compute(ast, errors, rhs);
+                    let lhs_tid = self.compute(ast, symbols, errors, lhs);
+                    let rhs_tid = self.compute(ast, symbols, errors, rhs);
                     let tid = match (lhs_tid.get(&self.types), rhs_tid.get(&self.types)) {
                         (Type::Unknown, Type::Unknown) => {
                             rhs.put(&mut self.assignments, Some(lhs_tid));
@@ -677,10 +684,10 @@ impl Types {
         result
     }
 
-    pub fn pretty_print(&self, ast: &Ast) {
+    pub fn pretty_print(&self, ast: &Ast, symbols: &Symbols) {
         println!();
         for id in ast.ids.iter() {
-            let qualified = id.get(&ast.qualified_idents);
+            let qualified = id.get(&symbols.qualified_idents);
             if qualified.is_empty() {
                 continue;
             }

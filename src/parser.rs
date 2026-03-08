@@ -1,6 +1,10 @@
+use smallvec::SmallVec;
+
 use crate::{
-    ast::{Ast, AstId, AstKind, InfixKind},
+    arena::Arena,
+    ast::{Ast, AstId, AstKind, InfixKind, Literal},
     error::{ErrorKind, Errors},
+    file::Files,
     lexer::{
         Location, TokenId,
         TokenKind::{self, *},
@@ -41,6 +45,7 @@ pub struct Parser<'a> {
     tokens: &'a Tokens,
     cursor: TokenId,
     ast: &'a mut Ast,
+    files: &'a Files,
     errors: &'a mut Errors,
     ctx: ParserCtx,
 }
@@ -52,22 +57,29 @@ enum ParserCtx {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a Tokens, ast: &'a mut Ast, errors: &'a mut Errors) -> Self {
+    pub fn new(
+        tokens: &'a Tokens,
+        ast: &'a mut Ast,
+        files: &'a Files,
+        errors: &'a mut Errors,
+    ) -> Self {
         Self {
             tokens,
             cursor: TokenId::new(0),
             ast,
+            files,
             errors,
             ctx: ParserCtx::Type,
         }
     }
 
     pub fn parse(mut self) -> AstId {
-        let ast = self.parse_list(AstKind::Struct, Self::parse_field);
+        let root = self.parse_list(AstKind::Struct, Self::parse_field);
         if !self.eof() {
             self.error("Trailing tokens when parsing file");
         }
-        ast
+        self.ast.compute_locations(root);
+        root
     }
 
     fn error_at(&mut self, location: Option<Location>, message: impl Into<std::string::String>) {
@@ -179,6 +191,59 @@ impl<'a> Parser<'a> {
         count
     }
 
+    fn add_slice_data(&mut self, id: AstId) {
+        if let Some(location) = id.get(&self.ast.locations) {
+            let slice = location.file.get(&self.files.sources)
+                [location.start as usize..location.end as usize]
+                .trim();
+            match id.get(&self.ast.kinds) {
+                AstKind::Integer => match slice.parse::<i64>() {
+                    Ok(v) => {
+                        id.put(&mut self.ast.literals, Some(Literal::Integer(v)));
+                    }
+                    Err(e) => {
+                        self.errors
+                            .log(ErrorKind::Parse, format!("failed to parse integer: {e}"));
+                    }
+                },
+                AstKind::Float => match slice.parse::<f64>() {
+                    Ok(v) => {
+                        id.put(&mut self.ast.literals, Some(Literal::Float(v)));
+                    }
+                    Err(e) => {
+                        self.errors
+                            .log(ErrorKind::Parse, format!("failed to parse integer: {e}"));
+                    }
+                },
+                AstKind::LIdent | AstKind::UIdent => {
+                    id.put(&mut self.ast.idents, slice.to_owned());
+                }
+                AstKind::String => {
+                    if slice.len() < 2 {
+                        self.errors.log(ErrorKind::Parse, "illegal string literal");
+                        return;
+                    }
+                    id.put(
+                        &mut self.ast.literals,
+                        Some(Literal::String((&slice[1..slice.len() - 1]).to_owned())),
+                    );
+                }
+                AstKind::Char => {
+                    if slice.len() != 3 {
+                        self.errors
+                            .log(ErrorKind::Parse, "illegal character literal");
+                        return;
+                    }
+                    id.put(
+                        &mut self.ast.literals,
+                        Some(Literal::Char(slice.chars().nth(1).unwrap() as u8)),
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn parse_list(&mut self, kind: AstKind, parser: impl Fn(&mut Self) -> AstId) -> AstId {
         let id = self.node(kind);
         let mut first = true;
@@ -219,6 +284,7 @@ impl<'a> Parser<'a> {
         };
         let location = self.cur_loc();
         id.put(&mut self.ast.locations, location);
+        self.add_slice_data(id);
         self.eat();
         id
     }
@@ -236,6 +302,7 @@ impl<'a> Parser<'a> {
         };
         let location = self.cur_loc();
         id.put(&mut self.ast.locations, location);
+        self.add_slice_data(id);
         self.eat();
         id
     }
@@ -423,21 +490,23 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_atom(&mut self) -> AstId {
-        let id = match self.cur() {
-            Integer => self.node(AstKind::Integer),
-            Float => self.node(AstKind::Float),
-            String => self.node(AstKind::String),
-            Char => self.node(AstKind::Char),
-            Underscore => self.node(AstKind::None),
-            LIdent => self.node(AstKind::LIdent),
-            UIdent => self.node(AstKind::UIdent),
+        let kind = match self.cur() {
+            Integer => AstKind::Integer,
+            Float => AstKind::Float,
+            String => AstKind::String,
+            Char => AstKind::Char,
+            Underscore => AstKind::None,
+            LIdent => AstKind::LIdent,
+            UIdent => AstKind::UIdent,
             _ => {
                 self.error("Expected expression");
-                self.node(AstKind::Error)
+                AstKind::Error
             }
         };
+        let id = self.node(kind);
         let location = self.cur_loc();
         id.put(&mut self.ast.locations, location);
+        self.add_slice_data(id);
         self.eat();
         id
     }
@@ -541,5 +610,23 @@ impl<'a> Parser<'a> {
         }
 
         id
+    }
+}
+
+impl Ast {
+    fn compute_locations(&mut self, root: AstId) {
+        fn helper(
+            id: AstId,
+            locations: &mut Arena<Ast, Option<Location>>,
+            children: &Arena<Ast, SmallVec<[AstId; 4]>>,
+        ) {
+            let mut location = *id.get(locations);
+            for child in id.get(children) {
+                helper(*child, locations, children);
+                location = Location::merge(&location, child.get(locations));
+            }
+            id.put(locations, location);
+        }
+        helper(root, &mut self.locations, &self.children)
     }
 }

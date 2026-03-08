@@ -11,6 +11,7 @@ use tokio::runtime::Runtime;
 
 use crate::{
     ast::Ast,
+    compiler::{CompilerState, compile},
     error::Errors,
     file::{Files, read_file},
     lexer::lex_file,
@@ -21,12 +22,14 @@ use crate::{
 
 pub mod arena;
 pub mod ast;
+pub mod compiler;
 pub mod error;
 pub mod file;
 pub mod lexer;
 pub mod lsp;
 pub mod parser;
 pub mod prelude;
+pub mod symb;
 pub mod types;
 
 fn clear() {
@@ -34,55 +37,16 @@ fn clear() {
     std::io::stdout().flush().unwrap();
 }
 
-fn compile(filename: Arc<str>) {
-    let mut errors = Errors::default();
-    let mut files = Files::default();
-    let mut ast = Ast::default();
-    let mut types = Types::default();
-
-    let filenames = [filename];
-
-    let begin = Instant::now();
-    for filename in filenames {
-        println!(
-            "{}{} \"{}\"",
-            "Compiling".bright_green().bold(),
-            ":".bold(),
-            filename
-        );
-        let file = read_file(filename.as_ref(), &mut files, &mut errors);
-        if let Some(file) = file {
-            let tokens = lex_file(file, &files, &mut errors);
-            let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
-            ast.pretty_print(root, &files);
-            ast.compute_locations(root);
-            ast.simplify(root);
-            ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
-            ast.parse_literals(&files, &mut errors);
-            ast.pretty_print(root, &files);
-            types.compute_types(&mut ast, &mut errors);
-            types.pretty_print(&ast);
-        }
-    }
-
-    let elapsed = begin.elapsed().as_secs_f32();
-    if errors.has_errors() {
-        println!();
-        errors.pretty_print(&files);
-        println!("\nFinished with errors in in {:.4} secs", elapsed);
-    } else {
-        println!("\nFinished in {:.4} secs", elapsed);
-    }
-}
-
-fn live(filename: &str) {
+async fn live(filename: &str) {
+    let runtime = Runtime::new().expect("unable to create runtime");
+    let state = Arc::new(CompilerState::default());
     let filename: Arc<str> = filename.into();
     let filename_clone = filename.clone();
     let mut debouncer =
         notify_debouncer_mini::new_debouncer(Duration::from_millis(100), move |ev| match ev {
             Ok(_) => {
                 clear();
-                compile(filename_clone.clone());
+                runtime.block_on(compile(None, &filename_clone, state.clone()));
             }
             Err(e) => eprintln!("{}", e),
         })
@@ -93,7 +57,6 @@ fn live(filename: &str) {
         .unwrap();
 
     clear();
-    compile(filename.clone());
     std::thread::sleep(Duration::MAX);
 }
 

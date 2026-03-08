@@ -1,17 +1,13 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use tokio::sync::Mutex;
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::*;
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
+use crate::ast::Ast;
 use crate::ast::AstId;
-use crate::file::read_string;
-use crate::{
-    ast::Ast, error::Errors, file::Files, lexer::lex_file, parser::Parser,
-    prelude::StandardPrelude, types::Types,
-};
+use crate::compiler::{CompilerState, compile};
 
 #[derive(Debug)]
 struct Backend {
@@ -59,8 +55,8 @@ impl Backend {
         {
             return;
         }
-        compile_uri(
-            contents,
+        compile(
+            Some(contents),
             uri.to_file_path().unwrap().to_str().unwrap(),
             self.state.clone(),
         )
@@ -156,16 +152,17 @@ impl LanguageServer for Backend {
         let position = hover_params.text_document_position_params.position;
 
         let ast = self.state.ast.lock().await;
+        let symbols = self.state.symbols.lock().await;
         let types = self.state.types.lock().await;
 
         let hovered_id = find_ident(position, &ast);
         let tid = hovered_id.map(|id| id.get(&types.assignments).unwrap());
 
-        let ident = hovered_id.map(|id| id.get(&ast.qualified_idents));
+        let ident = hovered_id.map(|id| id.get(&symbols.qualified_idents));
 
         let msg = match (tid, ident) {
             (Some(tid), Some(ident)) => {
-                let hovered_def_id = hovered_id.map(|id| id.get(&ast.definitions));
+                let hovered_def_id = hovered_id.map(|id| id.get(&symbols.definitions));
                 if hovered_def_id.is_none() {
                     format!("unable to find definition: \"{}\"", ident)
                 } else {
@@ -216,12 +213,13 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> Result<Option<GotoDefinitionResponse>> {
         let ast = self.state.ast.lock().await;
+        let symbols = self.state.symbols.lock().await;
 
         let Some(id) = find_ident(params.text_document_position_params.position, &ast) else {
             return Ok(None);
         };
 
-        let Some(definition) = id.get(&ast.definitions) else {
+        let Some(definition) = id.get(&symbols.definitions) else {
             return Ok(None);
         };
         let Some(loc) = definition.get(&ast.locations) else {
@@ -241,37 +239,6 @@ impl LanguageServer for Backend {
             },
         })))
     }
-}
-
-#[derive(Debug, Default)]
-struct CompilerState {
-    errors: Mutex<Errors>,
-    files: Mutex<Files>,
-    ast: Mutex<Ast>,
-    types: Mutex<Types>,
-}
-
-async fn compile_uri(contents: String, path: &str, state: Arc<CompilerState>) {
-    let mut errors = Errors::default();
-    let mut files = Files::default();
-    let mut ast = Ast::default();
-    let mut types = Types::default();
-
-    let file = read_string(contents, path, &mut files);
-    if let Some(file) = file {
-        let tokens = lex_file(file, &files, &mut errors);
-        let root = Parser::new(&tokens, &mut ast, &mut errors).parse();
-        ast.compute_locations(root);
-        ast.simplify(root);
-        ast.parse_literals(&files, &mut errors);
-        ast.resolve_idents(&files, root, &mut errors, StandardPrelude);
-        types.compute_types(&mut ast, &mut errors);
-    }
-
-    *state.errors.lock().await = errors;
-    *state.files.lock().await = files;
-    *state.ast.lock().await = ast;
-    *state.types.lock().await = types;
 }
 
 pub async fn lsp_main() {
