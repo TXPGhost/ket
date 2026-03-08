@@ -158,6 +158,7 @@ impl LanguageServer for Backend {
                     ),
                 ),
                 definition_provider: Some(OneOf::Left(true)),
+                document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
             },
             server_info: Some(ServerInfo {
@@ -269,7 +270,7 @@ impl LanguageServer for Backend {
                 },
                 end: Position {
                     line: loc.line_end - 1,
-                    character: loc.line_end - 1,
+                    character: loc.char_end - 1,
                 },
             },
         })))
@@ -361,6 +362,52 @@ impl LanguageServer for Backend {
             result_id: None,
             data: tokens,
         })))
+    }
+
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let ast = self.state.ast.lock().await;
+        let symbols = self.state.symbols.lock().await;
+
+        let Some(hovered_id) = find_ident(params.text_document_position_params.position, &ast)
+        else {
+            return Ok(None);
+        };
+        let hovered_qualified = hovered_id.get(&symbols.qualified_idents);
+        if hovered_qualified.is_empty()
+            || hovered_qualified
+                .split('.')
+                .next_back()
+                .unwrap()
+                .contains("__blk")
+        {
+            return Ok(None);
+        }
+
+        let mut result = Vec::new();
+        for id in ast.ids.iter() {
+            if let Some(location) = id.get(&ast.locations)
+                && id.get(&symbols.qualified_idents) == hovered_qualified
+            {
+                result.push(DocumentHighlight {
+                    range: Range {
+                        start: Position {
+                            line: location.line_start - 1,
+                            character: location.char_start - 1,
+                        },
+                        end: Position {
+                            line: location.line_end - 1,
+                            character: location.char_end,
+                        },
+                    },
+                    kind: None,
+                });
+            }
+        }
+
+        Ok(Some(result))
     }
 }
 
