@@ -4,7 +4,7 @@ use crate::{
     arena::{Arena, Id, World},
     ast::{Ast, AstId, AstKind, InfixKind, Literal},
     errors::{ErrorKind, Errors},
-    symb::Symbols,
+    resolve::Symbols,
 };
 
 #[derive(Default, PartialEq, Eq, Clone, Copy, Debug, Hash)]

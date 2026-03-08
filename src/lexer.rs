@@ -1,5 +1,5 @@
 use colored::Colorize;
-use logos::{Lexer, Logos};
+use logos::{Lexer as LogosLexer, Logos};
 
 use crate::{
     arena::{Arena, Id, World},
@@ -163,6 +163,61 @@ pub struct Tokens {
 }
 pub type TokenId = Id<Tokens>;
 
+pub struct Lexer<'a> {
+    files: &'a Files,
+    errors: &'a mut Errors,
+}
+
+impl<'a> Lexer<'a> {
+    pub fn new(files: &'a Files, errors: &'a mut Errors) -> Self {
+        Self { files, errors }
+    }
+
+    pub fn lex(&mut self, file: FileId) -> Tokens {
+        let mut tokens = Tokens::default();
+        let lexer = LogosLexer::<TokenKind>::new(file.get(&self.files.sources).as_str());
+        let mut line = 1;
+        let mut char = 1;
+        let mut last_end = 0;
+        for (tok, span) in lexer.spanned() {
+            let skipped = span.start as u32 - last_end;
+            last_end = span.end as u32;
+            char += skipped;
+
+            let width = span.end as u32 - span.start as u32;
+            let location = Location {
+                file,
+                start: span.start as u32,
+                end: span.end as u32,
+                line_start: line,
+                line_end: line,
+                char_start: char,
+                char_end: char + width - 1,
+            };
+
+            let tok = tok.unwrap_or_else(|_| {
+                let slice = &file.get(&self.files.sources)[span.start..span.end];
+                self.errors
+                    .log(ErrorKind::Lex, format!("Unrecognized token '{}'", slice))
+                    .location(location);
+                TokenKind::Unknown
+            });
+            tokens
+                .ids
+                .alloc()
+                .put(&mut tokens.kinds, tok)
+                .put(&mut tokens.locations, Some(location));
+
+            char += width;
+            if tok == TokenKind::Newline {
+                line += 1;
+                char = 1;
+            }
+        }
+        tokens
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Location {
     pub file: FileId,
@@ -226,48 +281,4 @@ impl Location {
             None => println!(),
         }
     }
-}
-
-pub fn lex_file(file: FileId, files: &Files, errors: &mut Errors) -> Tokens {
-    let mut tokens = Tokens::default();
-    let lexer = Lexer::<TokenKind>::new(file.get(&files.sources).as_str());
-    let mut line = 1;
-    let mut char = 1;
-    let mut last_end = 0;
-    for (tok, span) in lexer.spanned() {
-        let skipped = span.start as u32 - last_end;
-        last_end = span.end as u32;
-        char += skipped;
-
-        let width = span.end as u32 - span.start as u32;
-        let location = Location {
-            file,
-            start: span.start as u32,
-            end: span.end as u32,
-            line_start: line,
-            line_end: line,
-            char_start: char,
-            char_end: char + width - 1,
-        };
-
-        let tok = tok.unwrap_or_else(|_| {
-            let slice = &file.get(&files.sources)[span.start..span.end];
-            errors
-                .log(ErrorKind::Lex, format!("Unrecognized token '{}'", slice))
-                .location(location);
-            TokenKind::Unknown
-        });
-        tokens
-            .ids
-            .alloc()
-            .put(&mut tokens.kinds, tok)
-            .put(&mut tokens.locations, Some(location));
-
-        char += width;
-        if tok == TokenKind::Newline {
-            line += 1;
-            char = 1;
-        }
-    }
-    tokens
 }

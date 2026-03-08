@@ -4,7 +4,6 @@ use crate::{
     arena::Arena,
     ast::{Ast, AstId, AstKind},
     errors::{ErrorKind, Errors},
-    file::Files,
 };
 
 pub trait Prelude {
@@ -35,34 +34,31 @@ pub struct Symbols {
 
 pub struct Resolver<'a> {
     pub ast: &'a mut Ast,
-    pub files: &'a Files,
     pub symbols: &'a mut Symbols,
-    pub qualified_idents_map: &'a mut HashMap<String, AstId>,
-    pub definitions_map: &'a mut HashMap<String, AstId>,
-    pub unresolved: &'a mut Vec<AstId>,
+    pub errors: &'a mut Errors,
+    pub qualified_idents_map: HashMap<String, AstId>,
+    pub definitions_map: HashMap<String, AstId>,
+    pub unresolved: Vec<AstId>,
 }
 
-pub fn resolve_symbols(
-    ast: &mut Ast,
-    files: &Files,
-    root: AstId,
-    errors: &mut Errors,
-    prelude: impl Prelude,
-) -> Symbols {
-    let mut resolver = Resolver {
-        files,
-        ast,
-        symbols: &mut Symbols::default(),
-        qualified_idents_map: &mut HashMap::new(),
-        definitions_map: &mut HashMap::new(),
-        unresolved: &mut Vec::new(),
-    };
+impl<'a> Resolver<'a> {
+    pub fn new(ast: &'a mut Ast, symbols: &'a mut Symbols, errors: &'a mut Errors) -> Self {
+        Self {
+            ast,
+            symbols,
+            errors,
+            qualified_idents_map: HashMap::new(),
+            definitions_map: HashMap::new(),
+            unresolved: Vec::new(),
+        }
+    }
 
-    resolver.remove_grouping(root);
-    prelude.apply(&mut resolver);
-    resolver.qualify_idents(root, "");
-    resolver.find_definitions(errors);
-    std::mem::take(resolver.symbols)
+    pub fn resolve(mut self, root: AstId, prelude: impl Prelude) {
+        self.remove_grouping(root);
+        prelude.apply(&mut self);
+        self.qualify_idents(root, "");
+        self.find_definitions();
+    }
 }
 
 impl Resolver<'_> {
@@ -119,7 +115,7 @@ impl Resolver<'_> {
         }
     }
 
-    pub fn find_definitions(&mut self, errors: &mut Errors) {
+    pub fn find_definitions(&mut self) {
         for id in self.unresolved.iter() {
             // Try to resolve identifiers to their fully qualified names
             if matches!(id.get(&self.ast.kinds), AstKind::LIdent | AstKind::UIdent) {
@@ -136,7 +132,7 @@ impl Resolver<'_> {
                     let rdot = ident.rfind('.').unwrap();
                     let Some(rrdot) = ident[..rdot].rfind('.') else {
                         id.put(&mut self.symbols.qualified_idents, "".to_owned());
-                        errors
+                        self.errors
                             .log(
                                 ErrorKind::Resolve,
                                 format!("Unresolved identifier \"{}\"", id.get(&self.ast.idents)),

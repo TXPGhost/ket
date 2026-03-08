@@ -13,7 +13,7 @@ pub mod file;
 pub mod lexer;
 pub mod lsp;
 pub mod parser;
-pub mod symb;
+pub mod resolve;
 pub mod types;
 
 fn clear() {
