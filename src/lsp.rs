@@ -1,12 +1,13 @@
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::*;
 use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 
-use crate::ast::Ast;
 use crate::ast::AstId;
+use crate::ast::{Ast, AstKind};
 use crate::compiler::{CompilerState, compile};
 
 #[derive(Debug)]
@@ -89,6 +90,22 @@ fn find_ident(position: Position, ast: &Ast) -> Option<AstId> {
     found_id
 }
 
+static TOKEN_TYPES: LazyLock<Vec<SemanticTokenType>> = LazyLock::new(|| {
+    vec![
+        SemanticTokenType::TYPE,
+        SemanticTokenType::VARIABLE,
+        SemanticTokenType::STRING,
+        SemanticTokenType::NUMBER,
+    ]
+});
+static TOKEN_MAP: LazyLock<HashMap<SemanticTokenType, u32>> = LazyLock::new(|| {
+    let mut result = HashMap::new();
+    for (index, token_type) in TOKEN_TYPES.iter().enumerate() {
+        result.insert(token_type.clone(), index as u32);
+    }
+    result
+});
+
 impl LanguageServer for Backend {
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
@@ -112,7 +129,7 @@ impl LanguageServer for Backend {
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
                             legend: SemanticTokensLegend {
-                                token_types: vec!["type".into(), "class".into(), "enum".into()],
+                                token_types: TOKEN_TYPES.clone(),
                                 token_modifiers: vec![],
                             },
                             range: Some(false),
@@ -232,6 +249,93 @@ impl LanguageServer for Backend {
                     character: loc.line_end - 1,
                 },
             },
+        })))
+    }
+
+    async fn semantic_tokens_full(
+        &self,
+        _: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let mut tokens = Vec::new();
+        let ast = self.state.ast.lock().await;
+
+        let mut ids: Vec<_> = ast
+            .ids
+            .iter()
+            .filter_map(|id| id.get(&ast.locations).map(|loc| (id, loc)))
+            .collect();
+        ids.sort_by(|x, y| match x.1.line_start.cmp(&y.1.line_start) {
+            std::cmp::Ordering::Less => std::cmp::Ordering::Less,
+            std::cmp::Ordering::Equal => x.1.char_start.cmp(&y.1.char_start),
+            std::cmp::Ordering::Greater => std::cmp::Ordering::Greater,
+        });
+
+        let mut prev_line = 0;
+        let mut prev_char = 0;
+        for (id, location) in ids {
+            let kind = *match id.get(&ast.kinds) {
+                AstKind::LIdent => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::UIdent => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::Void => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::String => TOKEN_MAP.get(&SemanticTokenType::STRING).unwrap(),
+                AstKind::Char => TOKEN_MAP.get(&SemanticTokenType::STRING).unwrap(),
+                AstKind::None => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::Integer => TOKEN_MAP.get(&SemanticTokenType::NUMBER).unwrap(),
+                AstKind::Float => TOKEN_MAP.get(&SemanticTokenType::NUMBER).unwrap(),
+                // AstKind::Call => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Method => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Group => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Func => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Block => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Proj => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Index => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Struct => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Tuple => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Array => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Repeat => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Vector => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::Field => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::Arg => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Optional => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::Bind => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::BindMut => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Assign => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::If => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::IfElse => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                // AstKind::Infix(infix_kind) => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                AstKind::PrimitiveI32 => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::PrimitiveF32 => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::PrimitiveString => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::PrimitiveChar => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::PrimitiveBool => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::PrimitiveTrue => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                AstKind::PrimitiveFalse => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
+                // AstKind::Error => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
+                _ => continue,
+            };
+
+            let line = location.line_start - 1;
+            let char = location.char_start - 1;
+            let delta_line = line - prev_line;
+            let delta_start = if delta_line > 0 {
+                char
+            } else {
+                char - prev_char
+            };
+            tokens.push(SemanticToken {
+                delta_line,
+                delta_start,
+                length: 1 + location.char_end - location.char_start,
+                token_type: kind,
+                token_modifiers_bitset: 0,
+            });
+
+            prev_line = line;
+            prev_char = char;
+        }
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data: tokens,
         })))
     }
 }
