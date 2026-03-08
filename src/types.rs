@@ -596,7 +596,6 @@ impl Types {
                 let else_body_tid = self.compute(ast, symbols, errors, else_body);
                 match cond_tid.get(&self.types) {
                     Type::Bool => {}
-                    Type::Optional => {}
                     Type::Optional => {
                         // TODO: handle shadowed re-typing
                     }
