@@ -1,7 +1,7 @@
 import(path String)   _
-print (msg String)    _
-flush (stdout Stdout) _
-todo  ()              _
+print(msg String)     _
+flush(stdout Stdout)  _
+todo()                _
 
 Stdin         _
 Stdout        _

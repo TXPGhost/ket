@@ -33,7 +33,7 @@ main() {
   my_tuple = ((("hello, world!", 42 * 100 + 10)))
   x = my_tuple.1
 
-  test = my_tuple.0
+  test2 = my_tuple.0
 
   hello = Hello
 
@@ -43,9 +43,6 @@ main() {
 
   main() + arr
 }
-
-true 1
-false 0
 
 opts (
   keymap (preset "none")

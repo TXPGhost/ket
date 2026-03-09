@@ -69,7 +69,13 @@ impl Resolver<'_> {
     pub fn qualify_and_define_self(&mut self, id: AstId, ident: &str) {
         id.put(&mut self.symbols.qualified_idents, ident.to_owned());
         id.put(&mut self.symbols.symbol_definitions, Some(id));
-        self.definitions_map.insert(ident.to_owned(), id);
+        if self.definitions_map.contains_key(ident) {
+            self.errors
+                .log(ErrorKind::Resolve, "Duplicate identifier")
+                .location_opt(*id.get(&self.ast.locations));
+        } else {
+            self.definitions_map.insert(ident.to_owned(), id);
+        }
     }
 
     pub fn qualify_only(&mut self, id: AstId, ident: &str) {

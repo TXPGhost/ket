@@ -12,10 +12,20 @@ Vector3 (
   y F32
   z F32
 
-  cached (len F32)
-
-  new(x F32, y F32, z F32) Vector3(x, y, z)
+  cached_len F32
 )
+
+new(x F32, y F32, z F32) Vector3(x, y, z, 100.0)
+
+x 10
+y 20
+add (x I32) _
+func (x I32) I32
+call () _
+pwd _
+f (x I32) _
+g (x I32, y I32) _
+T (x I32, y I32)
 
 main() {
   v = ()
@@ -25,8 +35,8 @@ main() {
   v = (y)
   v = (add(x))
   v = (pwd)
-  v = (x (42))
-  v = (x (42, 42))
+  v = (f (42))
+  v = (g (42, 42))
   v = ((42, 42))
   v = (T(42, 42))
   v = (func(42) + 1)
@@ -35,11 +45,6 @@ main() {
   v .= 10
   v := 10
 }
-
-Vector3 (
-  new(x F32, y F32, z F32) Vector3(x, y, z)
-  elts (x F32, y F32, z F32)
-)
 
 test() {
   call()
@@ -52,5 +57,3 @@ test() {
   arr = []
   arr = []42
 }
-
-Vector3 I32?"error message"

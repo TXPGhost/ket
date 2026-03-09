@@ -339,10 +339,13 @@ impl Types {
                             && *func_ty.get(&self.types) == Type::Struct
                         {
                             let arg_name = arg_id.get(&ast.idents);
-                            let struct_id = func
-                                .get(&symbols.symbol_definitions)
-                                .expect("struct should have definition")
-                                .get(&ast.children)[0];
+                            let Some(struct_id) = func.get(&symbols.symbol_definitions) else {
+                                errors
+                                    .log(ErrorKind::Resolve, "Struct missing definition")
+                                    .location_opt(*func.get(&ast.locations));
+                                continue;
+                            };
+                            let struct_id = struct_id.get(&ast.children)[0];
                             let field_id = struct_id.get(&ast.children)[i];
                             let field_name = field_id.get(&ast.idents);
                             if arg_name != field_name {
