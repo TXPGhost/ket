@@ -335,6 +335,8 @@ impl Types {
                                 .location_opt(*arg_id.get(&ast.locations));
                         }
 
+                        // TODO: figure out how to do this for functions as well (I think we need
+                        //       to store type-level identifier name info for this to work)
                         if matches!(arg_id.get(&ast.kinds), AstKind::VArg | AstKind::TArg)
                             && *func_ty.get(&self.types) == Type::Struct
                         {
@@ -365,12 +367,7 @@ impl Types {
                 }
                 self.assign(id, result_ty)
             }
-            AstKind::Method => {
-                errors
-                    .log(ErrorKind::Type, "TODO: implement Method type checker")
-                    .location_opt(*id.get(&ast.locations));
-                self.assign_new(id, Type::Weak)
-            }
+            AstKind::Method => unreachable!("should have been simplified"),
             AstKind::Group => self.assign_new(id, Type::Weak),
             AstKind::Func => {
                 let tid = self.assign_new(id, Type::Weak);

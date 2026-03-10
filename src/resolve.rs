@@ -59,7 +59,7 @@ impl<'a> Resolver<'a> {
 
     pub fn resolve(mut self, root: AstId, prelude: impl Prelude) {
         prelude.apply(&mut self);
-        self.remove_grouping(root);
+        self.simplify_ast(root);
         self.qualify_idents(root, "");
         self.find_definitions();
     }
@@ -128,8 +128,6 @@ impl Resolver<'_> {
     }
 
     pub fn find_definitions(&mut self) {
-        println!("map is {:?}", self.symbols.qualified_idents);
-        println!("map is {:?}", self.definitions_map);
         for id in self.undefined_ids.iter() {
             // Try to resolve identifiers to their fully qualified names
             if matches!(id.get(&self.ast.kinds), AstKind::VIdent | AstKind::TIdent) {
@@ -167,14 +165,25 @@ impl Resolver<'_> {
         }
     }
 
-    pub fn remove_grouping(&mut self, root: AstId) {
+    pub fn simplify_ast(&mut self, root: AstId) {
         for i in 0..root.get(&self.ast.children).len() {
             let child = root.get(&self.ast.children)[i];
-            self.remove_grouping(child);
-            if *child.get(&self.ast.kinds) == AstKind::Group {
-                let loc = *child.get(&self.ast.children)[0].get(&self.ast.locations);
-                root.get_mut(&mut self.ast.children)[i].put(&mut self.ast.locations, loc);
-                root.get_mut(&mut self.ast.children)[i] = child.get(&self.ast.children)[0];
+            self.simplify_ast(child);
+            match *child.get(&self.ast.kinds) {
+                AstKind::Group => {
+                    let loc = *child.get(&self.ast.children)[0].get(&self.ast.locations);
+                    root.get_mut(&mut self.ast.children)[i].put(&mut self.ast.locations, loc);
+                    root.get_mut(&mut self.ast.children)[i] = child.get(&self.ast.children)[0];
+                }
+                AstKind::Method => {
+                    let base = child.get(&self.ast.children)[0];
+                    let args = child.get(&self.ast.children)[2];
+                    args.get_mut(&mut self.ast.children).insert(0, base);
+                    child.get_mut(&mut self.ast.children).remove(0);
+
+                    *child.get_mut(&mut self.ast.kinds) = AstKind::Call;
+                }
+                _ => {}
             }
         }
     }

@@ -25,6 +25,7 @@ types    import("ast")
 clear() {
     print("\x1B[2J\x1B[1;1H")
     flush(stdout)
+    stdout:flush()
 }
 
 live(filename String) {
