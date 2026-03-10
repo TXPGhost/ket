@@ -10,6 +10,7 @@ use tower_lsp_server::{Client, LanguageServer, LspService, Server};
 use crate::ast::AstId;
 use crate::ast::{Ast, AstKind};
 use crate::compiler::{CompilerState, compile};
+use crate::types::Type;
 
 #[derive(Debug)]
 struct Backend {
@@ -306,6 +307,8 @@ impl LanguageServer for Backend {
     ) -> Result<Option<SemanticTokensResult>> {
         let mut tokens = Vec::new();
         let ast = self.state.ast.lock().await;
+        let symbols = self.state.symbols.lock().await;
+        let types = self.state.types.lock().await;
 
         let mut ids: Vec<_> = ast
             .ids
@@ -321,7 +324,11 @@ impl LanguageServer for Backend {
         let mut prev_line = 0;
         let mut prev_char = 0;
         for (id, location) in ids {
-            let kind = *match id.get(&ast.kinds) {
+            let mut ast_kind = *id.get(&ast.kinds);
+            if let Some(def_id) = id.get(&symbols.symbol_definitions) {
+                ast_kind = *def_id.get(&ast.kinds);
+            }
+            let mut kind = *match ast_kind {
                 AstKind::VIdent => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 AstKind::TIdent => TOKEN_MAP.get(&SemanticTokenType::TYPE).unwrap(),
                 AstKind::Void => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
@@ -362,6 +369,12 @@ impl LanguageServer for Backend {
                 // AstKind::Error => TOKEN_MAP.get(&SemanticTokenType::VARIABLE).unwrap(),
                 _ => continue,
             };
+
+            if let Some(tid) = id.get(&types.type_assignments)
+                && *tid.get(&types.types) == Type::Func
+            {
+                kind = *TOKEN_MAP.get(&SemanticTokenType::FUNCTION).unwrap()
+            }
 
             let line = location.line_start - 1;
             let char = location.char_start - 1;

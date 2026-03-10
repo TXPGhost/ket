@@ -16,8 +16,12 @@ init_world() {
 
 Socket (addr String)
 
+print(sock Socket) _
+
 main() {
   my_sock = Socket(addr="127.0.0.1:8080")
+
+  result = my_sock.addr
 
   names = ["Alexander", "James", "Robertson"]
 

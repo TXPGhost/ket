@@ -22,7 +22,7 @@ main() {
 
   vec3 = add(vec1, vec2)
 
-  result = vec1:add(vec2):mul(by=10.0)
+  result = vec1:add(vec2):mul(10.0)
 
   print(to_string(vec3))
 }

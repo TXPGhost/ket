@@ -361,7 +361,9 @@ impl Types {
                                     )
                                     .location_opt(*arg_id.get(&ast.locations));
                             }
+                            let field_qualified = field_id.get(&symbols.qualified_idents).clone();
                             arg_id.put(&mut symbols.symbol_definitions, Some(field_id));
+                            arg_id.put(&mut symbols.qualified_idents, field_qualified);
                         }
                     }
                 }
@@ -445,7 +447,10 @@ impl Types {
                                 let field_def_tid = field_id
                                     .get(&self.type_assignments)
                                     .expect("field should have type");
+                                let field_qualified =
+                                    field_id.get(&symbols.qualified_idents).clone();
                                 field.put(&mut symbols.symbol_definitions, Some(*field_id));
+                                field.put(&mut symbols.qualified_idents, field_qualified);
                                 return self.assign(id, field_def_tid);
                             }
                         }
