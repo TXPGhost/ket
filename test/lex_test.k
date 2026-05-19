@@ -5,7 +5,6 @@ b ?(cond) 42 : 69
 c ?(cond) 42 : 69
 d ?(cond) 42
 e ?(cond) 42
-f ?(cond) 42 : 69
 
 Vector3 (
   x F32
@@ -15,35 +14,35 @@ Vector3 (
   cached_len F32
 )
 
-new(x F32, y F32, z F32) Vector3(x, y, z, 100.0)
+new(x F32, y F32, z F32) -> Vector3(x, y, z, 100.0)
 
 x 10
 y 20
-add (x I32) _
-func (x I32) I32
-call () _
+add (x I32) -> _
+func (x I32) -> I32
+call () -> () -> () -> _
 pwd _
-f (x I32) _
-g (x I32, y I32) _
+f (x I32) -> _
+g (x I32, y I32) -> _
 T (x I32, y I32)
 
 main() {
-  v = ()
-  v = (x)
-  v = (x + y)
-  v = (42)
-  v = (y)
-  v = (add(x))
-  v = (pwd)
-  v = (f (42))
-  v = (g (42, 42))
-  v = ((42, 42))
-  v = (T(42, 42))
-  v = (func(42) + 1)
+  v1 = ()
+  v2 = (x)
+  v3 = (x + y)
+  v4 = (42)
+  v5 = (y)
+  v6 = (add(x))
+  v7 = (pwd)
+  v8 = (f (42))
+  v9 = (g (42, 42))
+  v10 = ((42, 42))
+  v11 = (T(42, 42))
+  v12 = (func(42) + 1)
 
-  v = 10
-  v .= 10
-  v := 10
+  u = 10
+  u .= 10
+  u := 10
 }
 
 test() {
@@ -53,7 +52,7 @@ test() {
   call()[0]
   call()[1]
   call()[x](42)
-  arr = [1, 2, 3]
-  arr = []
-  arr = []42
+  arr1 = [1, 2, 3]
+  arr2 = []
+  arr3 = []42
 }

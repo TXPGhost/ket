@@ -7,7 +7,7 @@ Test (
   variables []Struct
 )
 
-println(_msg String) _
+println(_msg String) {}
 
 main() {
   println("hello, world!")

@@ -5,45 +5,30 @@ Emitter _
 World (
   particles []Particle
   rockets []Rocket
-  emitters []Emitter?
+  emitters []Emitter
 
   sock Socket
 )
 
 init_world() {
-
+  World([], [], [], Socket("127.0.0.1"))
 }
+
+add_particle(world World, particle Particle) {}
+add_rocket(world World, rocket Rocket) {}
+add_emitter(world World, emitter Emitter) {}
 
 Socket (addr String)
 
-print(sock Socket) _
+print(sock Socket) -> _
 
 main() {
-  my_sock = Socket(addr="127.0.0.1:8080")
+  my_world = init_world()
 
-  result = my_sock.addr
+  my_world:add_particle(Particle)
+  my_world:add_rocket(Rocket)
+  my_world:add_emitter(Emitter)
 
-  names = ["Alexander", "James", "Robertson"]
-
-  arr1 = [true, true, true]
-  arr2 = [true, true, false]
-  arr3 = [true, _, _, _]
-
-  x = String?
-  y = String
-
-  ?(x) {
-    w = 10
-  }
-
-  weird = Bool?
-  z = print(my_sock)
-
-  ?(weird) {
-    x1 = weird
-  } : {
-    x2 = weird
-  }
-
-  z = [x, y]
+  x = y
+  y = 10
 }

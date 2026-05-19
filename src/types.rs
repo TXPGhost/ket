@@ -337,7 +337,7 @@ impl Types {
 
                         // TODO: figure out how to do this for functions as well (I think we need
                         //       to store type-level identifier name info for this to work)
-                        if matches!(arg_id.get(&ast.kinds), AstKind::VArg | AstKind::TArg)
+                        if matches!(arg_id.get(&ast.kinds), AstKind::Arg)
                             && *func_ty.get(&self.types) == Type::Struct
                         {
                             let arg_name = arg_id.get(&ast.idents);
@@ -552,7 +552,7 @@ impl Types {
                 self.assign(id, tid);
                 tid
             }
-            AstKind::VArg | AstKind::TArg => {
+            AstKind::Arg => {
                 let tid = self.compute(ast, symbols, errors, id.get(&ast.children)[0]);
                 self.assign(id, tid)
             }
@@ -751,9 +751,10 @@ impl Types {
                 *buf += ")";
             }
             Type::Struct => {
-                let def_id = tid
-                    .get(&self.type_definitions)
-                    .expect("struct must have type definition");
+                let Some(def_id) = tid.get(&self.type_definitions) else {
+                    *buf += "internal error: struct missing type definition";
+                    return;
+                };
                 // TODO: expand should be an identifier (not a bool)
                 // TODO: is this even the right approach?
                 // - we want expansion when it's the definition _site_ of a struct
@@ -781,7 +782,7 @@ impl Types {
             }
             Type::Func => {
                 self.write_type_into(tid.get(&self.type_children)[0], false, ast, buf);
-                *buf += " ";
+                *buf += " -> ";
                 self.write_type_into(tid.get(&self.type_children)[1], false, ast, buf);
             }
             Type::Vector => {

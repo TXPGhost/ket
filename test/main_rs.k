@@ -1,13 +1,13 @@
-import(path String)   _
-print(msg String)     _
-flush(stdout Stdout)  _
-todo()                _
+import(path String) {}
+print(msg String) {}
+flush(stdout Stdout) {}
+todo() {}
 
 Stdin         _
 Stdout        _
-Runtime       (new () Runtime)
-Arc           (new (state CompilerState) Arc)
-CompilerState (default() CompilerState)
+Runtime       (new() -> Runtime)
+Arc           (new(state CompilerState) -> Arc)
+CompilerState (default() -> CompilerState)
 
 stdin  Stdin
 stdout Stdout

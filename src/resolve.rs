@@ -92,7 +92,7 @@ impl Resolver<'_> {
                 self.qualify_and_define_self(id, &path);
                 self.qualify_idents(id.get(&self.ast.children)[0], &path);
             }
-            AstKind::VArg | AstKind::TArg => {
+            AstKind::Arg => {
                 self.qualify_idents(id.get(&self.ast.children)[0], path);
             }
             AstKind::Bind => {

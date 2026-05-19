@@ -138,10 +138,10 @@ pub enum TokenKind {
     Underscore,
 
     #[regex(r"_*[A-Z][a-zA-Z0-9]*")]
-    UIdent,
+    TIdent,
 
     #[regex(r"_*[a-z][_a-z0-9]*")]
-    LIdent,
+    VIdent,
 
     #[regex(r#"["]([^"\\\n]|\\.|\\\n)*["]"#)]
     String,
